@@ -1,0 +1,109 @@
+<Window x:Class="Gen5WStudio.NewThemeDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Create New Theme"
+        Width="540"
+        SizeToContent="Height"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource AppBgBrush}"
+        Foreground="{StaticResource TextPrimaryBrush}">
+    <Window.Resources>
+        <Style TargetType="TextBlock" x:Key="FieldLabel">
+            <Setter Property="Foreground" Value="#FF94A3B8" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Margin" Value="0,10,0,4" />
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Background" Value="#FF0D1522" />
+            <Setter Property="Foreground" Value="#FFF1F5F9" />
+            <Setter Property="BorderBrush" Value="#FF2E4466" />
+            <Setter Property="Padding" Value="8,6" />
+            <Setter Property="CaretBrush" Value="#FF38BDF8" />
+        </Style>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#FF1B2C44" />
+            <Setter Property="Foreground" Value="#FFF1F5F9" />
+            <Setter Property="BorderBrush" Value="#FF334E73" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="16,7" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+    </Window.Resources>
+
+    <Border Margin="18" Padding="18" Background="{StaticResource PanelBgBrush}" BorderBrush="{StaticResource BorderBrushSubtle}" BorderThickness="1" CornerRadius="10">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <StackPanel Grid.Row="0">
+                <TextBlock Text="CREATE NEW THEME" FontSize="15" FontWeight="Bold" Foreground="#FF38BDF8" />
+                <TextBlock Text="Adds a new Theme profile to your Studio library and switches right to it. A multi-theme USB Pack (/Gen5WLauncher/packs/) holds one subfolder per Theme."
+                           Foreground="#FF94A3B8" FontSize="11.5" TextWrapping="Wrap" Margin="0,4,0,6" />
+            </StackPanel>
+
+            <StackPanel Grid.Row="1">
+                <TextBlock Text="Theme Display Name" Style="{StaticResource FieldLabel}" />
+                <TextBox x:Name="ThemeNameBox" Text="My Custom Theme" TextChanged="OnThemeNameChanged" />
+
+                <TextBlock Text="Theme ID (Folder Name in Pack)" Style="{StaticResource FieldLabel}" />
+                <TextBox x:Name="PackIdBox" Text="my-custom-theme" KeyUp="OnPackIdKeyUp" />
+
+                <TextBlock Text="Author" Style="{StaticResource FieldLabel}" />
+                <TextBox x:Name="AuthorBox" Text="Driver" />
+
+                <TextBlock Text="Starting Layout" Style="{StaticResource FieldLabel}" />
+                <ComboBox x:Name="StarterStyleCombo" SelectedIndex="0" Padding="6,5" Foreground="#FF0F172A">
+                    <ComboBoxItem Content="Blank Freeform Canvas (Clean Empty Stage — Drag &amp; Drop)" Tag="blank_freeform" />
+                    <ComboBoxItem Content="Blank Single Grid (Clean Empty 4x2 Grid)" Tag="blank_grid" />
+                    <ComboBoxItem Content="Blank Multi-Page (2 Clean Empty Grid Pages)" Tag="blank_multipage" />
+                    <ComboBoxItem x:Name="CloneCurrentComboItem" Content="Clone Currently Open Theme" Tag="clone_current" />
+                </ComboBox>
+
+                <Grid Margin="0,10,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="12" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0">
+                        <TextBlock Text="Speed / Distance Unit" Style="{StaticResource FieldLabel}" Margin="0,0,0,4" />
+                        <ComboBox x:Name="SpeedUnitCombo" SelectedIndex="0" Padding="6,5" Foreground="#FF0F172A">
+                            <ComboBoxItem Content="MPH / mi (US)" Tag="mph" />
+                            <ComboBoxItem Content="km/h / km (Metric)" Tag="kmh" />
+                        </ComboBox>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Text="Temperature Unit" Style="{StaticResource FieldLabel}" Margin="0,0,0,4" />
+                        <ComboBox x:Name="TempUnitCombo" SelectedIndex="0" Padding="6,5" Foreground="#FF0F172A">
+                            <ComboBoxItem Content="&#x00B0;F (Fahrenheit)" Tag="F" />
+                            <ComboBoxItem Content="&#x00B0;C (Celsius)" Tag="C" />
+                        </ComboBox>
+                    </StackPanel>
+                </Grid>
+
+                <CheckBox x:Name="ShowSystemBarCheck" IsChecked="True" Foreground="#FFE2E8F0" Margin="0,12,0,0"
+                          Content="Keep OEM 90px System Top Bar Visible (1920x630 canvas)" />
+
+                <Border Background="#FF0D1522" BorderBrush="#FF263B59" BorderThickness="1" CornerRadius="6" Padding="10,8" Margin="0,12,0,0">
+                    <StackPanel>
+                        <TextBlock Text="Pack Placement" Foreground="#FF7DD3FC" FontSize="11.5" FontWeight="SemiBold" Margin="0,0,0,4" />
+                        <RadioButton x:Name="StartCleanPackRadio" GroupName="PackTarget" Foreground="#FFF1F5F9" Margin="0,2,0,4"
+                                     Content="Start a Fresh Clean Pack with ONLY this Theme (excludes built-in starters)" />
+                        <RadioButton x:Name="AddToPackRadio" GroupName="PackTarget" Foreground="#FFCBD5E1"
+                                     Content="Add this Theme to the currently open Pack" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+            <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+                <Button Content="Cancel" Width="95" Margin="0,0,8,0" IsCancel="True" />
+                <Button Content="Create Theme" Width="130" Background="#FF0F766E" BorderBrush="#FF14B8A6" IsDefault="True" Click="OnCreateClick" />
+            </StackPanel>
+        </Grid>
+    </Border>
+</Window>

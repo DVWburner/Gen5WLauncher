@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>Gen5WStudio</AssemblyName>
+    <RootNamespace>Gen5WStudio</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\gen5w-launcher-nemesis.zip" Condition="Exists('Assets\gen5w-launcher-nemesis.zip')" />
+    <EmbeddedResource Include="..\..\app\assets\packs\default\layout.json" LogicalName="Gen5WStudio.Assets.DefaultPack.layout.json" />
+    <EmbeddedResource Include="..\..\app\assets\packs\default\icons\*.svg" LogicalName="Gen5WStudio.Assets.DefaultPack.icons.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\..\app\assets\packs\default\anim\wave\*" LogicalName="Gen5WStudio.Assets.DefaultPack.anim.wave.%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

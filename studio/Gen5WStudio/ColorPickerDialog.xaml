@@ -1,0 +1,173 @@
+<Window x:Class="Gen5WStudio.ColorPickerDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Color &amp; Opacity Picker"
+        SizeToContent="WidthAndHeight" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        Background="#FF0B121D" Foreground="#FFF1F5F9">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#FF1B2C44" />
+            <Setter Property="Foreground" Value="#FFF1F5F9" />
+            <Setter Property="BorderBrush" Value="#FF334E73" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="12,6" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Background" Value="#FF0D1522" />
+            <Setter Property="Foreground" Value="#FFF1F5F9" />
+            <Setter Property="BorderBrush" Value="#FF2E4466" />
+            <Setter Property="Padding" Value="6,4" />
+            <Setter Property="CaretBrush" Value="#FF38BDF8" />
+        </Style>
+        <Style TargetType="TextBlock" x:Key="Lbl">
+            <Setter Property="Foreground" Value="#FF94A3B8" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Margin" Value="0,4,0,2" />
+        </Style>
+    </Window.Resources>
+
+    <Border BorderBrush="#FF263B59" BorderThickness="1" Padding="14">
+        <StackPanel Width="360">
+            <!-- SV Square + Hue Spectrum Bar -->
+            <Grid Height="192">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="322" />
+                    <ColumnDefinition Width="10" />
+                    <ColumnDefinition Width="28" />
+                </Grid.ColumnDefinitions>
+
+                <Border Grid.Column="0" Width="322" Height="192" BorderBrush="#FF334E73" BorderThickness="1" CornerRadius="4" ClipToBounds="True">
+                    <Canvas x:Name="SvCanvas" Width="320" Height="190" Cursor="Cross"
+                            MouseLeftButtonDown="OnSvMouseDown" MouseMove="OnSvMouseMove" MouseLeftButtonUp="OnSvMouseUp">
+                        <Rectangle Width="320" Height="190">
+                            <Rectangle.Fill>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                    <GradientStop x:Name="SvLeftStop" Color="#FFFFFFFF" Offset="0" />
+                                    <GradientStop x:Name="SvHueStop" Color="#FF38BDF8" Offset="1" />
+                                </LinearGradientBrush>
+                            </Rectangle.Fill>
+                        </Rectangle>
+                        <Rectangle Width="320" Height="190" IsHitTestVisible="False">
+                            <Rectangle.Fill>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                    <GradientStop Color="#00000000" Offset="0" />
+                                    <GradientStop Color="#FF000000" Offset="1" />
+                                </LinearGradientBrush>
+                            </Rectangle.Fill>
+                        </Rectangle>
+                        <Grid x:Name="SvThumb" Width="14" Height="14" IsHitTestVisible="False">
+                            <Ellipse Stroke="#FF000000" StrokeThickness="3" />
+                            <Ellipse Stroke="#FFFFFFFF" StrokeThickness="1.5" />
+                        </Grid>
+                    </Canvas>
+                </Border>
+
+                <Border Grid.Column="2" Width="28" Height="192" BorderBrush="#FF334E73" BorderThickness="1" CornerRadius="4" ClipToBounds="True">
+                    <Canvas x:Name="HueCanvas" Width="26" Height="190" Cursor="Hand"
+                            MouseLeftButtonDown="OnHueMouseDown" MouseMove="OnHueMouseMove" MouseLeftButtonUp="OnHueMouseUp">
+                        <Rectangle Width="26" Height="190">
+                            <Rectangle.Fill>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                    <GradientStop Color="#FFFF0000" Offset="0.000" />
+                                    <GradientStop Color="#FFFFFF00" Offset="0.167" />
+                                    <GradientStop Color="#FF00FF00" Offset="0.333" />
+                                    <GradientStop Color="#FF00FFFF" Offset="0.500" />
+                                    <GradientStop Color="#FF0000FF" Offset="0.667" />
+                                    <GradientStop Color="#FFFF00FF" Offset="0.833" />
+                                    <GradientStop Color="#FFFF0000" Offset="1.000" />
+                                </LinearGradientBrush>
+                            </Rectangle.Fill>
+                        </Rectangle>
+                        <Border x:Name="HueThumb" Width="26" Height="6" BorderBrush="#FFFFFFFF" BorderThickness="1.5"
+                                Background="#44000000" IsHitTestVisible="False" />
+                    </Canvas>
+                </Border>
+            </Grid>
+
+            <!-- Opacity Slider -->
+            <Grid Margin="0,12,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="44" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="Opacity" Style="{StaticResource Lbl}" Margin="0,0,10,0" VerticalAlignment="Center" />
+                <Grid Grid.Column="1" VerticalAlignment="Center">
+                    <Border Height="10" CornerRadius="5" Margin="4,0" ClipToBounds="True" BorderBrush="#FF334E73" BorderThickness="1">
+                        <Grid>
+                            <Rectangle Fill="{StaticResource CheckerBrush}" />
+                            <Rectangle>
+                                <Rectangle.Fill>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                        <GradientStop x:Name="AlphaBarStart" Color="#0038BDF8" Offset="0" />
+                                        <GradientStop x:Name="AlphaBarEnd" Color="#FF38BDF8" Offset="1" />
+                                    </LinearGradientBrush>
+                                </Rectangle.Fill>
+                            </Rectangle>
+                        </Grid>
+                    </Border>
+                    <Slider x:Name="AlphaSlider" Minimum="0" Maximum="100" Value="100" VerticalAlignment="Center" ValueChanged="OnAlphaSliderChanged" />
+                </Grid>
+                <TextBlock x:Name="AlphaPctText" Grid.Column="2" Text="100%" HorizontalAlignment="Right" VerticalAlignment="Center"
+                           Foreground="#FF38BDF8" FontWeight="Bold" FontSize="12" />
+            </Grid>
+
+            <!-- Preview & R / G / B / Hex -->
+            <Grid Margin="0,10,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="68" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="46" />
+                    <ColumnDefinition Width="46" />
+                    <ColumnDefinition Width="46" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                    <TextBlock Text="Preview" Style="{StaticResource Lbl}" />
+                    <Border Height="28" CornerRadius="4" BorderBrush="#FF64748B" BorderThickness="1" ClipToBounds="True">
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <Rectangle Grid.ColumnSpan="2" Fill="{StaticResource CheckerBrush}" />
+                            <Rectangle x:Name="OldSwatchRect" Grid.Column="0" ToolTip="Original Color" />
+                            <Rectangle x:Name="NewSwatchRect" Grid.Column="1" ToolTip="New Color" />
+                        </Grid>
+                    </Border>
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Margin="0,0,4,0">
+                    <TextBlock Text="Hex (#AARRGGBB)" Style="{StaticResource Lbl}" />
+                    <TextBox x:Name="HexBox" LostFocus="OnHexBoxApplied" KeyDown="OnHexBoxKeyDown" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Margin="2,0">
+                    <TextBlock Text="R" Style="{StaticResource Lbl}" />
+                    <TextBox x:Name="RBox" LostFocus="OnRgbBoxApplied" KeyDown="OnRgbBoxKeyDown" />
+                </StackPanel>
+                <StackPanel Grid.Column="3" Margin="2,0">
+                    <TextBlock Text="G" Style="{StaticResource Lbl}" />
+                    <TextBox x:Name="GBox" LostFocus="OnRgbBoxApplied" KeyDown="OnRgbBoxKeyDown" />
+                </StackPanel>
+                <StackPanel Grid.Column="4" Margin="2,0,0,0">
+                    <TextBlock Text="B" Style="{StaticResource Lbl}" />
+                    <TextBox x:Name="BBox" LostFocus="OnRgbBoxApplied" KeyDown="OnRgbBoxKeyDown" />
+                </StackPanel>
+            </Grid>
+
+            <!-- Quick Swatches -->
+            <TextBlock Text="Quick Palette Presets" Style="{StaticResource Lbl}" Margin="0,10,0,4" />
+            <WrapPanel x:Name="PresetsPanel" />
+
+            <!-- Actions -->
+            <DockPanel Margin="0,14,0,0">
+                <Button DockPanel.Dock="Left" Content="Clear / None" Background="#FF1E293B" Foreground="#FFCBD5E1"
+                        ToolTip="Clear custom color (leave blank / use default)" Click="OnClearClick" />
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="Cancel" Width="82" Margin="0,0,8,0" IsCancel="True" />
+                    <Button Content="Apply Color" Width="110" Background="#FF0F766E" BorderBrush="#FF14B8A6" IsDefault="True" Click="OnApplyClick" />
+                </StackPanel>
+            </DockPanel>
+        </StackPanel>
+    </Border>
+</Window>

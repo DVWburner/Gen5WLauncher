@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "settings": [
+    {
+      "key": "auto_activate_on_boot",
+      "type": "toggle",
+      "default": true,
+      "title": "Auto-activate confirmed custom HOME on cold boot",
+      "description": "After you confirm Gen5W Home via the 45-second test inside the app, this allows home-switcher to switch default HOME after the 10-second safe boot window. Turn this off to stay on stock Home while keeping the mod installed."
+    },
+    {
+      "key": "custom_hold_home",
+      "type": "toggle",
+      "default": false,
+      "title": "Hold ★ button (head unit) opens Gen5W Home",
+      "description": "Maps a long press of the head-unit ★ button to open Gen5W Home from any screen (even CarPlay/Android Auto). Short press stays untouched."
+    },
+    {
+      "key": "wheel_custom_hold_home",
+      "type": "toggle",
+      "default": false,
+      "title": "Hold Steering Wheel ★ button opens Gen5W Home",
+      "description": "Maps a long press of the steering wheel ★ button to open Gen5W Home. Short press stays untouched."
+    }
+  ]
+}

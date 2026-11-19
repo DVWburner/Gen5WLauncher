@@ -1,0 +1,94 @@
+{
+  "id": "gen5w-launcher",
+  "name": "Gen5W Custom Launcher",
+  "version": "0.3.9",
+  "hmgapi": ">=1.0.2",
+  "authors": ["Gen5WLauncher"],
+  "license": "MIT",
+  "description": "Standalone customizable HOME launcher with data-driven layouts, SVG icons, subtle animations, live EV telemetry via HMG-API, and 5-layer failsafe protection.",
+  "system": {
+    "android": "4.4.2"
+  },
+  "apps": [
+    {
+      "apk": "app/Gen5WLauncher.apk",
+      "package": "com.gen5w.launcher"
+    }
+  ],
+  "services": [
+    {
+      "name": "home-switcher",
+      "jar": "svc/home-switcher.jar",
+      "class": "com.gen5w.launcher.svc.HomeSwitcher",
+      "user": "root",
+      "start": "android",
+      "restart": true
+    }
+  ],
+  "provides": {
+    "launcher": [
+      {
+        "package": "com.gen5w.launcher",
+        "class": ".MainActivity",
+        "title": "Gen5W Home"
+      }
+    ]
+  },
+  "usb": ["Gen5WLauncher"],
+  "vehicle": {
+    "read": [
+      "hv.soc",
+      "hv.health",
+      "hv.ready",
+      "hv.conditioning",
+      "hv.conditioning_active",
+      "hv.conditioning_failure",
+      "hv.battery_temp_min",
+      "conditioning.state",
+      "charging",
+      "battery12v.soc",
+      "battery12v.sensor_state",
+      "battery12v.sensor_invalid",
+      "battery12v.sensor_error",
+      "battery12v.saver",
+      "outside_temp",
+      "outside_temp_f",
+      "gear.park",
+      "parking_brake",
+      "speed",
+      "moving",
+      "driving.restricted",
+      "odometer",
+      "steering.angle",
+      "pedal.accel",
+      "brake.pressure",
+      "wheel_heat",
+      "defogger",
+      "seat_heat.driver",
+      "seat_heat.passenger",
+      "seat_heat.rear_left",
+      "seat_heat.rear_right",
+      "seat_vent.driver",
+      "seat_vent.passenger",
+      "seat_state.driver",
+      "seat_state.passenger",
+      "seat_state.rear_left",
+      "seat_state.rear_right",
+      "guide_lines"
+    ]
+  },
+  "input": [
+    {
+      "key": "custom",
+      "press": "hold",
+      "open": "com.gen5w.launcher/.MainActivity",
+      "when": "settings.custom_hold_home"
+    },
+    {
+      "key": "wheel_custom",
+      "press": "hold",
+      "open": "com.gen5w.launcher/.MainActivity",
+      "when": "settings.wheel_custom_hold_home"
+    }
+  ]
+}

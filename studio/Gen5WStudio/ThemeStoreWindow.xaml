@@ -1,0 +1,177 @@
+<Window x:Class="Gen5WStudio.ThemeStoreWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Gen5W Theme Store — market.ioniqthemes.com"
+        Width="1120" Height="780"
+        MinWidth="900" MinHeight="640"
+        WindowStartupLocation="CenterOwner"
+        Background="#FF0B1120"
+        Foreground="#FFF8FAFC">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#FF1E293B"/>
+            <Setter Property="Foreground" Value="#FFF8FAFC"/>
+            <Setter Property="BorderBrush" Value="#FF334155"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="11,6"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#FF334155"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="TextBox">
+            <Setter Property="Background" Value="#FF111827"/>
+            <Setter Property="Foreground" Value="#FFF8FAFC"/>
+            <Setter Property="BorderBrush" Value="#FF334155"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="9,6"/>
+            <Setter Property="CaretBrush" Value="#FF38BDF8"/>
+        </Style>
+
+        <Style TargetType="ComboBox">
+            <Setter Property="Background" Value="#FF111827"/>
+            <Setter Property="Foreground" Value="#FF0F172A"/>
+            <Setter Property="BorderBrush" Value="#FF334155"/>
+            <Setter Property="Padding" Value="8,5"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- HEADER -->
+        <DockPanel Grid.Row="0" Margin="0,0,0,10" LastChildFill="False">
+            <StackPanel DockPanel.Dock="Left">
+                <TextBlock Text="GEN5W THEME STORE" FontSize="20" FontWeight="Bold" Foreground="#FF38BDF8"/>
+                <TextBlock Text="Browse, safety-check, and install single-theme packages from market.ioniqthemes.com"
+                           Foreground="#FF94A3B8" FontSize="12" Margin="0,2,0,0"/>
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <Border x:Name="AccountBadgeBorder" Background="#FF1E293B" BorderBrush="#FF334155" BorderThickness="1" CornerRadius="6" Padding="9,5" Margin="0,0,6,0" VerticalAlignment="Center">
+                    <TextBlock x:Name="AccountBadgeText" Text="Not signed in" Foreground="#FF94A3B8" FontSize="12" FontWeight="SemiBold"/>
+                </Border>
+                <Button x:Name="SignInBtn" Content="Sign In / Register" Margin="0,0,6,0" Click="OnSignInClick"/>
+                <Button x:Name="SignOutBtn" Content="Sign Out" Visibility="Collapsed" Margin="0,0,10,0" Click="OnSignOutClick"/>
+                <Button Content="Import Local .zip..." Background="#FF0F766E" BorderBrush="#FF14B8A6" Margin="0,0,8,0"
+                        ToolTip="Verify and import a downloaded single-theme .zip file from disk" Click="OnImportLocalZipClick"/>
+                <Button x:Name="UploadActiveBtn" Content="Upload Current Theme..." Background="#FF1D4ED8" BorderBrush="#FF3B82F6"
+                        Click="OnOpenUploadDialogClick"/>
+            </StackPanel>
+        </DockPanel>
+
+        <!-- SEARCH & FILTER BAR -->
+        <Border Grid.Row="1" Background="#FF111827" BorderBrush="#FF1E293B" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,0,0,10">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="8"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- Row 0: Search + Category + My Themes + Sort Badge + Refresh -->
+                <Grid Grid.Row="0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="1.4*"/>
+                        <ColumnDefinition Width="10"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="200"/>
+                        <ColumnDefinition Width="10"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Column="0" Text="Search:" Foreground="#FF94A3B8" VerticalAlignment="Center" Margin="0,0,6,0" FontWeight="SemiBold"/>
+                    <TextBox x:Name="SearchBox" Grid.Column="1" VerticalContentAlignment="Center"
+                             ToolTip="Filter by theme name, author, tag, version, or description"
+                             KeyDown="OnSearchBoxKeyDown" TextChanged="OnSearchTextChanged"/>
+
+                    <TextBlock Grid.Column="3" Text="Category:" Foreground="#FF94A3B8" VerticalAlignment="Center" Margin="0,0,6,0" FontWeight="SemiBold"/>
+                    <ComboBox x:Name="CategoryCombo" Grid.Column="4" VerticalContentAlignment="Center" SelectionChanged="OnCategoryChanged"/>
+
+                    <CheckBox x:Name="MyThemesCheck" Grid.Column="6" Content="My Themes Only" Foreground="#FF38BDF8" FontWeight="SemiBold"
+                              VerticalAlignment="Center" Margin="0,0,10,0" Visibility="Collapsed"
+                              Checked="OnMyThemesFilterChanged" Unchecked="OnMyThemesFilterChanged"/>
+
+                    <Border Grid.Column="7" Background="#FF1E293B" BorderBrush="#FF334155" BorderThickness="1" CornerRadius="6" Padding="10,5" Margin="0,0,8,0" VerticalAlignment="Center">
+                        <TextBlock Text="Sorted: Date Newest ↓" Foreground="#FF34D399" FontSize="12" FontWeight="SemiBold"/>
+                    </Border>
+
+                    <Button Grid.Column="8" Content="Search" Background="#FF0E4A6F" BorderBrush="#FF38BDF8" Margin="0,0,6,0" Click="OnSearchClick"/>
+                    <Button Grid.Column="9" Content="Refresh" Click="OnRefreshClick"/>
+                </Grid>
+
+                <!-- Row 2: Store Endpoint -->
+                <DockPanel Grid.Row="2" LastChildFill="True">
+                    <TextBlock DockPanel.Dock="Left" Text="Store URL:" Foreground="#FF64748B" FontSize="11" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                    <Button DockPanel.Dock="Right" Content="Reset Default" Padding="8,3" FontSize="11" Margin="6,0,0,0" Click="OnResetUrlClick"/>
+                    <TextBox x:Name="StoreUrlBox" FontSize="11" Padding="7,4" LostFocus="OnStoreUrlLostFocus"/>
+                </DockPanel>
+            </Grid>
+        </Border>
+
+        <!-- CONNECTION / INFO BANNER -->
+        <Border x:Name="BannerBorder" Grid.Row="2" Visibility="Collapsed"
+                Background="#FF1E293B" BorderBrush="#FFF59E0B" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,0,0,10">
+            <DockPanel LastChildFill="True">
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
+                    <Button Content="Retry Store" Click="OnRefreshClick"/>
+                </StackPanel>
+                <StackPanel>
+                    <TextBlock x:Name="BannerTitleText" Text="Could not connect to Theme Store" Foreground="#FFFCD34D" FontWeight="Bold" FontSize="13"/>
+                    <TextBlock x:Name="BannerDetailText" Foreground="#FFCBD5E1" FontSize="12" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- CARD GRID -->
+        <Border Grid.Row="3" Background="#FF0F172A" BorderBrush="#FF1E293B" BorderThickness="1" CornerRadius="8" Padding="10">
+            <Grid>
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <WrapPanel x:Name="CardsHost" Orientation="Horizontal" HorizontalAlignment="Left"/>
+                </ScrollViewer>
+
+                <TextBlock x:Name="EmptyStateText" Visibility="Collapsed"
+                           Text="No themes matched your current filter."
+                           Foreground="#FF94A3B8" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Grid>
+        </Border>
+
+        <!-- FOOTER -->
+        <DockPanel Grid.Row="4" Margin="0,10,0,0" LastChildFill="False">
+            <TextBlock x:Name="StatusText" DockPanel.Dock="Left" Text="Loading themes..." Foreground="#FFCBD5E1" VerticalAlignment="Center"/>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <TextBlock x:Name="SafetyNoteText" Text="All downloads run strict ZIP/magic-byte/SVG/action safety scans before extraction."
+                           Foreground="#FF64748B" FontSize="11" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <Button Content="Close" Click="OnCloseClick"/>
+            </StackPanel>
+        </DockPanel>
+    </Grid>
+</Window>

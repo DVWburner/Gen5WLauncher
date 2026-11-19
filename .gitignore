@@ -1,0 +1,28 @@
+# Generated artifacts, caches, and private signing keys
+build/
+dist/
+keys/
+oem/
+tmp/
+.build-tools/
+studio/**/bin/
+studio/**/obj/
+studio/dist/
+studio/Gen5WStudio/Assets/gen5w-launcher-nemesis.zip
+*.apk
+*.dex
+*.jar
+*.class
+*.p12
+*.pfx
+*.jks
+*.key
+*.pub
+*.zip
+*.log
+.DS_Store
+Thumbs.db
+
+# Local agent handoff & server scratch folders
+CONTEXT_FOR_NEXT_AGENT.md
+webserver-handoff/

@@ -1,0 +1,692 @@
+{
+  "formatVersion": 2,
+  "id": "default",
+  "name": "Gen5W Cobalt EV (v2)",
+  "author": "Gen5WLauncher",
+  "version": "0.2.2",
+  "referenceWidth": 1920,
+  "referenceHeight": 720,
+  "tokens": {
+    "showSystemBar": true,
+    "soundMode": "system",
+    "cornerRadiusPx": 22,
+    "accentColor": "#FF38BDF8",
+    "okColor": "#FF10B981",
+    "warnColor": "#FFF59E0B",
+    "dangerColor": "#FFEF4444"
+  },
+  "background": {
+    "type": "animated_aurora",
+    "primaryColor": "#FF060B12",
+    "secondaryColor": "#FF0D1E34",
+    "accentColor": "#FF195F91",
+    "secondaryAccentColor": "#FF0E5A68",
+    "dimColor": "#44060B12",
+    "framesDir": "anim/wave",
+    "fps": 16,
+    "speed": 1.0
+  },
+  "root": {
+    "id": "root_shell",
+    "type": "panel",
+    "layout": "flex_col",
+    "gapPx": 14,
+    "paddingPx": [26, 16, 26, 18],
+    "style": { "transparent": true },
+    "children": [
+      {
+        "id": "top_strip",
+        "type": "panel",
+        "layout": "flex_row",
+        "height": 72,
+        "gapPx": 12,
+        "paddingPx": [16, 8, 16, 8],
+        "style": {
+          "bgColor": "#C80D1624",
+          "bgEndColor": "#C8112036",
+          "gradientAngle": 0,
+          "borderColor": "#335890BF",
+          "borderWidthPx": 2,
+          "cornerRadiusPx": 18
+        },
+        "children": [
+          {
+            "id": "clock_widget",
+            "kind": "clock",
+            "width": 230,
+            "title": "CLOCK",
+            "style": { "transparent": true, "titleSizePx": 30, "subtitleSizePx": 15 }
+          },
+          {
+            "id": "badge_gear",
+            "kind": "telemetry_badge",
+            "width": 155,
+            "telemetryKey": "gear_speed",
+            "title": "DRIVE",
+            "style": {
+              "bgColor": "#99132338",
+              "borderColor": "#44477BA8",
+              "borderWidthPx": 1,
+              "cornerRadiusPx": 14,
+              "titleSizePx": 22,
+              "subtitleSizePx": 13
+            }
+          },
+          {
+            "id": "badge_hv",
+            "kind": "telemetry_badge",
+            "width": 165,
+            "telemetryKey": "hv_soc",
+            "title": "HV BATTERY",
+            "style": {
+              "bgColor": "#99132338",
+              "borderColor": "#44477BA8",
+              "borderWidthPx": 1,
+              "cornerRadiusPx": 14,
+              "titleSizePx": 22,
+              "subtitleSizePx": 13
+            }
+          },
+          {
+            "id": "badge_12v",
+            "kind": "telemetry_badge",
+            "width": 135,
+            "telemetryKey": "aux12v_soc",
+            "title": "12V AUX",
+            "style": {
+              "bgColor": "#99132338",
+              "borderColor": "#44477BA8",
+              "borderWidthPx": 1,
+              "cornerRadiusPx": 14,
+              "titleSizePx": 22,
+              "subtitleSizePx": 13
+            }
+          },
+          {
+            "id": "badge_temp",
+            "kind": "telemetry_badge",
+            "width": 135,
+            "telemetryKey": "outside_temp_f",
+            "title": "EXT TEMP",
+            "style": {
+              "bgColor": "#99132338",
+              "borderColor": "#44477BA8",
+              "borderWidthPx": 1,
+              "cornerRadiusPx": 14,
+              "titleSizePx": 22,
+              "subtitleSizePx": 13
+            }
+          },
+          {
+            "id": "top_spacer",
+            "kind": "spacer",
+            "flexWeight": 1
+          },
+          {
+            "id": "switcher_pill",
+            "kind": "switcher_status",
+            "width": 300,
+            "title": "HOME SWITCHER",
+            "action": { "type": "open_switcher" },
+            "style": {
+              "bgColor": "#CC122840",
+              "borderColor": "#8838BDF8",
+              "borderWidthPx": 2,
+              "cornerRadiusPx": 14,
+              "titleSizePx": 18,
+              "subtitleSizePx": 13
+            }
+          },
+          {
+            "id": "bar_toggle_pill",
+            "kind": "action_pill",
+            "width": 148,
+            "title": "TOP BAR",
+            "subtitle": "Toggle 720p",
+            "action": { "type": "toggle_bar" },
+            "style": {
+              "bgColor": "#AA152232",
+              "borderColor": "#4464748B",
+              "borderWidthPx": 2,
+              "cornerRadiusPx": 14,
+              "titleSizePx": 17,
+              "subtitleSizePx": 12
+            }
+          },
+          {
+            "id": "sound_toggle_pill",
+            "kind": "action_pill",
+            "width": 140,
+            "title": "AUDIO",
+            "subtitle": "System",
+            "action": { "type": "cycle_sound" },
+            "style": {
+              "bgColor": "#AA152232",
+              "borderColor": "#4464748B",
+              "borderWidthPx": 2,
+              "cornerRadiusPx": 14,
+              "titleSizePx": 17,
+              "subtitleSizePx": 12
+            }
+          }
+        ]
+      },
+      {
+        "id": "workspace_pager",
+        "type": "panel",
+        "layout": "pager",
+        "flexWeight": 1,
+        "showDots": true,
+        "style": { "transparent": true, "accentColor": "#FF38BDF8" },
+        "children": [
+          {
+            "id": "page_drive",
+            "pageTitle": "EV Dashboard",
+            "type": "panel",
+            "layout": "flex_row",
+            "gapPx": 20,
+            "style": { "transparent": true },
+            "children": [
+              {
+                "id": "ev_hero_card",
+                "kind": "ev_hero",
+                "width": 480,
+                "title": "IONIQ 5 TELEMETRY",
+                "subtitle": "Live HMG-API Vehicle Bus",
+                "icon": "icons/ev.svg",
+                "action": {
+                  "type": "preset",
+                  "cmd": "ev"
+                },
+                "style": {
+                  "bgColor": "#D60F1928",
+                  "bgEndColor": "#D8132640",
+                  "gradientAngle": 135,
+                  "pressedColor": "#EE182B44",
+                  "borderColor": "#5538BDF8",
+                  "borderWidthPx": 2,
+                  "cornerRadiusPx": 24,
+                  "iconSizePx": 52,
+                  "titleSizePx": 22,
+                  "subtitleSizePx": 16
+                },
+                "animation": {
+                  "pressScale": 0.985,
+                  "enterDelayMs": 20,
+                  "enterDurationMs": 240
+                }
+              },
+              {
+                "id": "launch_grid",
+                "type": "panel",
+                "layout": "grid",
+                "flexWeight": 1,
+                "columns": 4,
+                "rows": 2,
+                "gapPx": 16,
+                "style": { "transparent": true },
+                "children": [
+                  {
+                    "id": "tile_ev",
+                    "kind": "tile",
+                    "title": "EV & Energy",
+                    "subtitle": "Battery & Range",
+                    "icon": "icons/ev.svg",
+                    "action": { "type": "preset", "cmd": "ev" },
+                    "style": {
+                      "bgColor": "#D4111D2D",
+                      "bgEndColor": "#D4162840",
+                      "gradientAngle": 135,
+                      "pressedColor": "#EE1C3352",
+                      "borderColor": "#4438BDF8",
+                      "borderWidthPx": 2,
+                      "cornerRadiusPx": 22,
+                      "accentColor": "#FF38BDF8",
+                      "titleSizePx": 24,
+                      "subtitleSizePx": 15
+                    },
+                    "animation": { "pressScale": 0.96, "enterDelayMs": 30, "enterDurationMs": 220 }
+                  },
+                  {
+                    "id": "tile_theme_store",
+                    "kind": "tile",
+                    "title": "Theme Store",
+                    "subtitle": "Browse & Download",
+                    "icon": "icons/store.svg",
+                    "badgeText": "STORE",
+                    "action": { "type": "open_theme_store" },
+                    "style": {
+                      "bgColor": "#DE0E2A33",
+                      "bgEndColor": "#DE134044",
+                      "gradientAngle": 135,
+                      "pressedColor": "#EE165359",
+                      "borderColor": "#AA10B981",
+                      "borderWidthPx": 2,
+                      "cornerRadiusPx": 22,
+                      "accentColor": "#FF10B981",
+                      "titleSizePx": 24,
+                      "subtitleSizePx": 15
+                    },
+                    "animation": { "pressScale": 0.96, "enterDelayMs": 50, "enterDurationMs": 220 }
+                  },
+                  {
+                    "id": "tile_climate",
+                    "kind": "tile",
+                    "title": "Climate",
+                    "subtitle": "HVAC & Seats",
+                    "icon": "icons/climate.svg",
+                    "action": { "type": "launch_climate" },
+                    "style": {
+                      "bgColor": "#D4111D2D",
+                      "bgEndColor": "#D415243D",
+                      "gradientAngle": 135,
+                      "pressedColor": "#EE1C3352",
+                      "borderColor": "#4460A5FA",
+                      "borderWidthPx": 2,
+                      "cornerRadiusPx": 22,
+                      "accentColor": "#FF60A5FA",
+                      "titleSizePx": 24,
+                      "subtitleSizePx": 15
+                    },
+                    "animation": { "pressScale": 0.96, "enterDelayMs": 70, "enterDurationMs": 220 }
+                  },
+                  {
+                    "id": "tile_projection",
+                    "kind": "tile",
+                    "title": "CarPlay / AA",
+                    "subtitle": "Phone Projection",
+                    "icon": "icons/projection.svg",
+                    "action": { "type": "preset", "cmd": "projection" },
+                    "style": {
+                      "bgColor": "#D4111D2D",
+                      "bgEndColor": "#D412292F",
+                      "gradientAngle": 135,
+                      "pressedColor": "#EE1C3352",
+                      "borderColor": "#4434D399",
+                      "borderWidthPx": 2,
+                      "cornerRadiusPx": 22,
+                      "accentColor": "#FF34D399",
+                      "titleSizePx": 24,
+                      "subtitleSizePx": 15
+                    },
+                    "animation": { "pressScale": 0.96, "enterDelayMs": 90, "enterDurationMs": 220 }
+                  },
+                  {
+                    "id": "tile_radio",
+                    "kind": "tile",
+                    "title": "Radio / SXM",
+                    "subtitle": "FM • AM • SXM",
+                    "icon": "icons/radio.svg",
+                    "action": { "type": "preset", "cmd": "radio" },
+                    "style": {
+                      "bgColor": "#D4111D2D",
+                      "bgEndColor": "#D41D1B3B",
+                      "gradientAngle": 135,
+                      "pressedColor": "#EE1C3352",
+                      "borderColor": "#44A78BFA",
+                      "borderWidthPx": 2,
+                      "cornerRadiusPx": 22,
+                      "accentColor": "#FFA78BFA",
+                      "titleSizePx": 24,
+                      "subtitleSizePx": 15
+                    },
+                    "animation": { "pressScale": 0.96, "enterDelayMs": 110, "enterDurationMs": 220 }
+                  },
+                  {
+                    "id": "tile_media",
+                    "kind": "tile",
+                    "title": "Media & USB",
+                    "subtitle": "Music & Sources",
+                    "icon": "icons/media.svg",
+                    "action": {
+                      "type": "launch",
+                      "package": "com.hkmc.av.app.mediagate",
+                      "class": "com.hkmc.av.app.mediagate.MediaGateActivity",
+                      "fallbackPackage": "com.daudio.av.app.usbmusic"
+                    },
+                    "style": {
+                      "bgColor": "#D4111D2D",
+                      "bgEndColor": "#D4261E24",
+                      "gradientAngle": 135,
+                      "pressedColor": "#EE1C3352",
+                      "borderColor": "#44F59E0B",
+                      "borderWidthPx": 2,
+                      "cornerRadiusPx": 22,
+                      "accentColor": "#FFF59E0B",
+                      "titleSizePx": 24,
+                      "subtitleSizePx": 15
+                    },
+                    "animation": { "pressScale": 0.96, "enterDelayMs": 130, "enterDurationMs": 220 }
+                  },
+                  {
+                    "id": "tile_navi",
+                    "kind": "tile",
+                    "title": "Navigation",
+                    "subtitle": "OEM Maps & Route",
+                    "icon": "icons/navi.svg",
+                    "action": { "type": "preset", "cmd": "navi" },
+                    "style": {
+                      "bgColor": "#D4111D2D",
+                      "bgEndColor": "#D4142838",
+                      "gradientAngle": 135,
+                      "pressedColor": "#EE1C3352",
+                      "borderColor": "#4438BDF8",
+                      "borderWidthPx": 2,
+                      "cornerRadiusPx": 22,
+                      "accentColor": "#FF38BDF8",
+                      "titleSizePx": 24,
+                      "subtitleSizePx": 15
+                    },
+                    "animation": { "pressScale": 0.96, "enterDelayMs": 150, "enterDurationMs": 220 }
+                  },
+                  {
+                    "id": "tile_apps",
+                    "kind": "tile",
+                    "title": "All Apps",
+                    "subtitle": "App Drawer",
+                    "icon": "icons/apps.svg",
+                    "action": { "type": "open_drawer" },
+                    "style": {
+                      "bgColor": "#D4142235",
+                      "bgEndColor": "#D419304A",
+                      "gradientAngle": 135,
+                      "pressedColor": "#EE1E3755",
+                      "borderColor": "#667DD3FC",
+                      "borderWidthPx": 2,
+                      "cornerRadiusPx": 22,
+                      "accentColor": "#FF7DD3FC",
+                      "titleSizePx": 24,
+                      "subtitleSizePx": 15
+                    },
+                    "animation": { "pressScale": 0.96, "enterDelayMs": 170, "enterDurationMs": 220 }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "id": "page_comfort",
+            "pageTitle": "Comfort & Animated Tiles",
+            "type": "panel",
+            "layout": "flex_row",
+            "gapPx": 18,
+            "style": { "transparent": true },
+            "children": [
+              {
+                "id": "p2_left_col",
+                "type": "panel",
+                "layout": "flex_col",
+                "width": 520,
+                "gapPx": 14,
+                "style": { "transparent": true },
+                "children": [
+                  {
+                    "id": "p2_gauges_row",
+                    "type": "panel",
+                    "layout": "flex_row",
+                    "flexWeight": 1.15,
+                    "gapPx": 14,
+                    "style": { "transparent": true },
+                    "children": [
+                      {
+                        "id": "ring_hv",
+                        "kind": "soc_ring",
+                        "flexWeight": 1,
+                        "telemetryKey": "hv_soc",
+                        "title": "HV Battery",
+                        "subtitle": "Tap for EV Screen",
+                        "action": { "type": "preset", "cmd": "ev" },
+                        "style": {
+                          "bgColor": "#D40F1C2D",
+                          "borderColor": "#5538BDF8",
+                          "accentColor": "#FF38BDF8",
+                          "borderWidthPx": 2,
+                          "cornerRadiusPx": 22,
+                          "iconSizePx": 106,
+                          "titleSizePx": 19,
+                          "subtitleSizePx": 13
+                        }
+                      },
+                      {
+                        "id": "ring_12v",
+                        "kind": "soc_ring",
+                        "flexWeight": 1,
+                        "telemetryKey": "aux12v_soc",
+                        "title": "12V Aux",
+                        "subtitle": "Health Monitor",
+                        "action": { "type": "preset", "cmd": "ev" },
+                        "style": {
+                          "bgColor": "#D40F1C2D",
+                          "borderColor": "#5510B981",
+                          "accentColor": "#FF10B981",
+                          "borderWidthPx": 2,
+                          "cornerRadiusPx": 22,
+                          "iconSizePx": 106,
+                          "titleSizePx": 19,
+                          "subtitleSizePx": 13
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "id": "p2_anim_tile",
+                    "kind": "tile",
+                    "flexWeight": 0.95,
+                    "title": "Rear View Camera (DRVM)",
+                    "subtitle": "Animated Tile Demo • Frame Loop",
+                    "icon": "icons/stock.svg",
+                    "badgeText": "ANIM TILE",
+                    "action": { "type": "preset", "cmd": "drvm" },
+                    "style": {
+                      "bgAnimAsset": "anim/wave",
+                      "bgAnimFps": 16,
+                      "bgDimAlpha": 95,
+                      "pressedColor": "#AA1C3352",
+                      "borderColor": "#8838BDF8",
+                      "borderWidthPx": 2,
+                      "cornerRadiusPx": 22,
+                      "iconSizePx": 42,
+                      "iconTint": "#FF7DD3FC",
+                      "accentColor": "#FF38BDF8",
+                      "titleSizePx": 22,
+                      "subtitleSizePx": 15
+                    },
+                    "animation": { "pressScale": 0.97 }
+                  }
+                ]
+              },
+              {
+                "id": "p2_grid",
+                "type": "panel",
+                "layout": "grid",
+                "flexWeight": 1,
+                "columns": 3,
+                "rows": 2,
+                "gapPx": 16,
+                "style": { "transparent": true },
+                "children": [
+                  {
+                    "id": "tile_seats",
+                    "kind": "tile",
+                    "title": "Seats & Steering",
+                    "subtitle": "Heat & Ventilation Control",
+                    "icon": "icons/climate.svg",
+                    "action": { "type": "preset", "cmd": "seat_front" },
+                    "style": {
+                      "bgColor": "#D4111D2D",
+                      "pressedColor": "#EE1C3352",
+                      "borderColor": "#55F59E0B",
+                      "iconTint": "#FFFBBF24",
+                      "borderWidthPx": 2,
+                      "cornerRadiusPx": 22
+                    }
+                  },
+                  {
+                    "id": "tile_quiet",
+                    "kind": "tile",
+                    "title": "Quiet Mode",
+                    "subtitle": "Rear Speaker Cabin Focus",
+                    "icon": "icons/radio.svg",
+                    "action": { "type": "preset", "cmd": "quiet_mode" },
+                    "style": {
+                      "bgColor": "#D4111D2D",
+                      "pressedColor": "#EE1C3352",
+                      "borderColor": "#55A78BFA",
+                      "iconTint": "#FFC4B5FD",
+                      "borderWidthPx": 2,
+                      "cornerRadiusPx": 22
+                    }
+                  },
+                  {
+                    "id": "tile_bluelink",
+                    "kind": "tile",
+                    "title": "BlueLink",
+                    "subtitle": "Connected Services",
+                    "icon": "icons/power.svg",
+                    "action": { "type": "preset", "cmd": "bluelink" },
+                    "style": {
+                      "bgColor": "#D4111D2D",
+                      "pressedColor": "#EE1C3352",
+                      "borderColor": "#5538BDF8",
+                      "iconTint": "#FF38BDF8",
+                      "borderWidthPx": 2,
+                      "cornerRadiusPx": 22
+                    }
+                  },
+                  {
+                    "id": "tile_driving_info",
+                    "kind": "tile",
+                    "title": "Driving Info",
+                    "subtitle": "Efficiency & Trip History",
+                    "icon": "icons/ev.svg",
+                    "action": { "type": "preset", "cmd": "driving_info" },
+                    "style": {
+                      "bgColor": "#D4111D2D",
+                      "pressedColor": "#EE1C3352",
+                      "borderColor": "#5510B981",
+                      "iconTint": "#FF34D399",
+                      "borderWidthPx": 2,
+                      "cornerRadiusPx": 22
+                    }
+                  },
+                  {
+                    "id": "tile_veh_settings",
+                    "kind": "tile",
+                    "title": "Vehicle Setup",
+                    "subtitle": "Cluster, Doors, Lights & ADAS",
+                    "icon": "icons/settings.svg",
+                    "action": { "type": "preset", "cmd": "vehicle_settings" },
+                    "style": {
+                      "bgColor": "#D4111D2D",
+                      "pressedColor": "#EE1C3352",
+                      "borderColor": "#5560A5FA",
+                      "iconTint": "#FF93C5FD",
+                      "borderWidthPx": 2,
+                      "cornerRadiusPx": 22
+                    }
+                  },
+                  {
+                    "id": "tile_notifications",
+                    "kind": "tile",
+                    "title": "Notifications",
+                    "subtitle": "Vehicle & System Alerts",
+                    "icon": "icons/home.svg",
+                    "action": { "type": "preset", "cmd": "notifications" },
+                    "style": {
+                      "bgColor": "#D4111D2D",
+                      "pressedColor": "#EE1C3352",
+                      "borderColor": "#55F472B6",
+                      "iconTint": "#FFF472B6",
+                      "borderWidthPx": 2,
+                      "cornerRadiusPx": 22
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "bottom_dock",
+        "type": "panel",
+        "layout": "flex_row",
+        "height": 78,
+        "gapPx": 12,
+        "paddingPx": [12, 8, 12, 8],
+        "style": {
+          "bgColor": "#CC0C1420",
+          "bgEndColor": "#CC101D30",
+          "gradientAngle": 0,
+          "borderColor": "#335890BF",
+          "borderWidthPx": 2,
+          "cornerRadiusPx": 20
+        },
+        "children": [
+          {
+            "id": "dock_navi",
+            "kind": "action_pill",
+            "flexWeight": 1,
+            "title": "Navigation",
+            "icon": "icons/navi.svg",
+            "action": { "type": "preset", "cmd": "navi" },
+            "style": { "bgColor": "#AA152232", "borderColor": "#33477BA8", "borderWidthPx": 1, "cornerRadiusPx": 14, "iconSizePx": 30, "titleSizePx": 18 }
+          },
+          {
+            "id": "dock_settings",
+            "kind": "action_pill",
+            "flexWeight": 0.9,
+            "title": "Setup",
+            "icon": "icons/settings.svg",
+            "action": { "type": "preset", "cmd": "setup" },
+            "style": { "bgColor": "#AA152232", "borderColor": "#33477BA8", "borderWidthPx": 1, "cornerRadiusPx": 14, "iconSizePx": 30, "titleSizePx": 18 }
+          },
+          {
+            "id": "dock_themes",
+            "kind": "action_pill",
+            "flexWeight": 1.15,
+            "title": "ThemePacks",
+            "icon": "icons/home.svg",
+            "action": { "type": "open_themes" },
+            "style": { "bgColor": "#BB0E3B3E", "borderColor": "#8810B981", "borderWidthPx": 2, "cornerRadiusPx": 14, "iconSizePx": 30, "titleSizePx": 18 }
+          },
+          {
+            "id": "dock_switcher",
+            "kind": "action_pill",
+            "flexWeight": 1,
+            "title": "Failsafe",
+            "icon": "icons/power.svg",
+            "action": { "type": "open_switcher" },
+            "style": { "bgColor": "#BB132B45", "borderColor": "#6638BDF8", "borderWidthPx": 2, "cornerRadiusPx": 14, "iconSizePx": 28, "titleSizePx": 18 }
+          },
+          {
+            "id": "dock_stock_tester",
+            "kind": "action_pill",
+            "flexWeight": 1.1,
+            "title": "Stock Buttons",
+            "icon": "icons/apps.svg",
+            "action": { "type": "open_stock_tester" },
+            "style": { "bgColor": "#BB162840", "borderColor": "#6660A5FA", "borderWidthPx": 2, "cornerRadiusPx": 14, "iconSizePx": 28, "titleSizePx": 18 }
+          },
+          {
+            "id": "dock_bg",
+            "kind": "action_pill",
+            "flexWeight": 0.95,
+            "title": "Backdrop Fx",
+            "action": { "type": "toggle_bg" },
+            "style": { "bgColor": "#AA152232", "borderColor": "#33477BA8", "borderWidthPx": 1, "cornerRadiusPx": 14, "titleSizePx": 17 }
+          },
+          {
+            "id": "dock_stock",
+            "kind": "action_pill",
+            "flexWeight": 1,
+            "title": "Stock Home",
+            "icon": "icons/stock.svg",
+            "action": { "type": "launch_stock" },
+            "style": { "bgColor": "#AA261922", "borderColor": "#55F472B6", "borderWidthPx": 1, "cornerRadiusPx": 14, "iconSizePx": 28, "titleSizePx": 17 }
+          }
+        ]
+      }
+    ]
+  }
+}

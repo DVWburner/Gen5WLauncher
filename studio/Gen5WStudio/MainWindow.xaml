@@ -1,0 +1,837 @@
+<Window x:Class="Gen5WStudio.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:Gen5WStudio.Controls"
+        Title="Gen5W Studio — Ioniq 5 ThemePack v2 Customizer"
+        Width="1580" Height="920" MinWidth="1220" MinHeight="740"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource AppBgBrush}"
+        Foreground="{StaticResource TextPrimaryBrush}">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#FF1B2C44" />
+            <Setter Property="Foreground" Value="#FFF1F5F9" />
+            <Setter Property="BorderBrush" Value="#FF334E73" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="9,5" />
+            <Setter Property="Margin" Value="2" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.45" />
+                    <Setter Property="Cursor" Value="Arrow" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Background" Value="#FF0D1522" />
+            <Setter Property="Foreground" Value="#FFF1F5F9" />
+            <Setter Property="BorderBrush" Value="#FF2E4466" />
+            <Setter Property="Padding" Value="6,4" />
+            <Setter Property="CaretBrush" Value="#FF38BDF8" />
+        </Style>
+        <Style x:Key="ColorTextBoxStyle" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="3" Padding="3,2">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Button x:Name="PART_SwatchBtn" Grid.Column="0" Width="18" Height="18" Margin="0,0,5,0"
+                                        Padding="0" Cursor="Hand" Focusable="False" Background="Transparent"
+                                        ToolTip="Open Color &amp; Opacity Picker">
+                                    <Button.Template>
+                                        <ControlTemplate TargetType="Button">
+                                            <Border CornerRadius="3" BorderBrush="#FF64748B" BorderThickness="1" ClipToBounds="True">
+                                                <Grid>
+                                                    <Rectangle Fill="{StaticResource CheckerBrush}" />
+                                                    <Rectangle Fill="{TemplateBinding Background}" />
+                                                </Grid>
+                                            </Border>
+                                        </ControlTemplate>
+                                    </Button.Template>
+                                </Button>
+                                <ScrollViewer x:Name="PART_ContentHost" Grid.Column="1" VerticalAlignment="Center" />
+                            </Grid>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="ComboBox">
+            <Setter Property="Background" Value="#FF0D1522" />
+            <Setter Property="Foreground" Value="#FF0F172A" />
+            <Setter Property="Padding" Value="6,4" />
+        </Style>
+        <Style TargetType="TextBlock" x:Key="FieldLabel">
+            <Setter Property="Foreground" Value="#FF94A3B8" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Margin" Value="0,6,0,2" />
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- TOP STUDIO TOOLBAR -->
+        <Border Grid.Row="0" Background="{StaticResource PanelBgBrush}" BorderBrush="{StaticResource BorderBrushSubtle}" BorderThickness="0,0,0,1" Padding="12,6">
+            <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,2,12,2">
+                    <TextBlock Text="GEN5W STUDIO" FontWeight="Bold" FontSize="15" Foreground="#FF38BDF8" VerticalAlignment="Center" Margin="0,0,10,0" />
+                    <Button Content="+ New Theme..." Background="#FF0F766E" BorderBrush="#FF14B8A6" Margin="0,0,6,0" Click="OnNewThemeClick" />
+                    <TextBlock Text="Theme:" Foreground="#FF94A3B8" VerticalAlignment="Center" Margin="2,0,5,0" />
+                    <ComboBox x:Name="ThemeSelectorCombo" Width="195" Margin="0,0,6,0" SelectionChanged="OnThemeSelectorChanged" />
+                    <Button Content="Open..." ToolTip="Open a Theme folder OR Pack folder (loads ONLY themes inside it)" Margin="0,0,4,0" Click="OnOpenFolderClick" />
+                    <Button x:Name="RecentBtn" Content="Recent ▾" ToolTip="Open a recently used theme or pack folder" Margin="0,0,4,0" Click="OnRecentDropdownClick" />
+                    <Button x:Name="SaveBtn" Content="Save" ToolTip="Save changes to active theme" Margin="0,0,4,0" Click="OnSaveCurrentClick" />
+                    <Button x:Name="SaveAsBtn" Content="Save As..." ToolTip="Save a copy of the active theme to another folder" Click="OnSaveFolderClick" />
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,2,12,2">
+                    <Button x:Name="ExportUsbBtn" Content="Export to USB..."
+                            ToolTip="Choose USB drive, manage/select pack themes, and optionally put the Gen5W Launcher NEMESIS installer onto USB"
+                            Background="#FF065F46" BorderBrush="#FF10B981" Click="OnExportUsbClick" />
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,2,14,2">
+                    <Button x:Name="ThemeStoreBtn" Content="Theme Store" ToolTip="Browse &amp; download themes from market.ioniqthemes.com" Background="#FF1E3A8A" BorderBrush="#FF3B82F6" Margin="0,0,4,0" Click="OnOpenThemeStoreClick" />
+                    <Button x:Name="UploadStoreBtn" Content="Upload to Theme Store" ToolTip="Package ONLY the currently active theme as a safe .zip with screenshot thumbnail &amp; upload to Store" Background="#FF065F46" BorderBrush="#FF10B981" Click="OnUploadThemeStoreClick" />
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,2,0,2">
+                    <CheckBox x:Name="TopBarCheck" Content="90px Bar" Foreground="#FFCBD5E1" IsChecked="True" VerticalAlignment="Center" Margin="0,0,10,0" Checked="OnSimChanged" Unchecked="OnSimChanged" />
+                    <TextBlock Text="HV %" Foreground="#FF94A3B8" VerticalAlignment="Center" Margin="0,0,3,0" />
+                    <Slider x:Name="HvSlider" Width="70" Minimum="0" Maximum="100" Value="78" VerticalAlignment="Center" ValueChanged="OnSimChanged" />
+                    <TextBlock x:Name="HvReadout" Text="78%" Width="34" Foreground="#FF38BDF8" FontWeight="Bold" VerticalAlignment="Center" />
+                    <TextBlock Text="EXT" Foreground="#FF94A3B8" VerticalAlignment="Center" Margin="6,0,3,0" />
+                    <Slider x:Name="TempSlider" Width="54" Minimum="-10" Maximum="115" Value="68" VerticalAlignment="Center" ValueChanged="OnSimChanged" />
+                    <TextBlock x:Name="TempReadout" Text="68°F" Width="38" Foreground="#FF34D399" FontWeight="Bold" VerticalAlignment="Center" />
+                    <CheckBox x:Name="ChargingCheck" Content="Chg" ToolTip="Charging Active" Foreground="#FF34D399" VerticalAlignment="Center" Margin="4,0,6,0" Checked="OnSimChanged" Unchecked="OnSimChanged" />
+                    <CheckBox x:Name="ParkCheck" Content="Park" Foreground="#FFF1F5F9" IsChecked="True" VerticalAlignment="Center" Checked="OnSimChanged" Unchecked="OnSimChanged" />
+                </StackPanel>
+            </WrapPanel>
+        </Border>
+
+        <!-- MAIN WORKBENCH -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="300" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="420" />
+            </Grid.ColumnDefinitions>
+
+            <!-- LEFT: HIERARCHY & PALETTE -->
+            <Border x:Name="LeftSidebarPanel" Grid.Column="0" Background="{StaticResource PanelBgBrush}" BorderBrush="{StaticResource BorderBrushSubtle}" BorderThickness="0,0,1,0" Padding="10">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Text="LAYOUT HIERARCHY" FontWeight="Bold" Foreground="#FF7DD3FC" Margin="2,2,0,8" />
+                    <TreeView x:Name="HierarchyTree" Grid.Row="1" Background="#FF0D1522" BorderBrush="{StaticResource BorderBrushSubtle}"
+                              Foreground="#FFE2E8F0" SelectedItemChanged="OnTreeSelectedChanged"
+                              AllowDrop="True"
+                              PreviewMouseLeftButtonDown="OnTreePreviewMouseDown"
+                              PreviewMouseMove="OnTreePreviewMouseMove"
+                              DragOver="OnTreeDragOver"
+                              Drop="OnTreeDrop">
+                        <TreeView.Resources>
+                            <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}" Color="#FF0369A1" />
+                            <SolidColorBrush x:Key="{x:Static SystemColors.HighlightTextBrushKey}" Color="#FFFFFFFF" />
+                            <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightBrushKey}" Color="#FF1E3A5F" />
+                            <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightTextBrushKey}" Color="#FFF1F5F9" />
+                        </TreeView.Resources>
+                        <TreeView.ItemContainerStyle>
+                            <Style TargetType="{x:Type TreeViewItem}">
+                                <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+                                <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}" />
+                                <Setter Property="Foreground" Value="#FFE2E8F0" />
+                                <Setter Property="Padding" Value="2,1" />
+                            </Style>
+                        </TreeView.ItemContainerStyle>
+                        <TreeView.ItemTemplate>
+                            <HierarchicalDataTemplate ItemsSource="{Binding TreeChildren}">
+                                <TextBlock Text="{Binding DisplayLabel}" Padding="3,2" />
+                            </HierarchicalDataTemplate>
+                        </TreeView.ItemTemplate>
+                    </TreeView>
+
+                    <StackPanel Grid.Row="2" Margin="0,8,0,0">
+                        <TextBlock Text="ADD COMPOSABLE ELEMENT" FontWeight="Bold" Foreground="#FF7DD3FC" FontSize="11" Margin="2,0,0,4" />
+                        <UniformGrid Columns="2">
+                            <Button Content="+ Panel Group" Click="OnAddPanelClick" />
+                            <Button Content="+ Text / Sensor" Click="OnAddTextClick" />
+                            <Button Content="+ Percent Bar" Click="OnAddProgressBarClick" />
+                            <Button Content="+ Gauge Ring" Click="OnAddRingClick" />
+                            <Button Content="+ Icon / Image" Click="OnAddImageClick" />
+                            <Button Content="+ Clock" Click="OnAddClockClick" />
+                            <Button Content="+ Pager" Click="OnAddPagerClick" />
+                            <Button Content="+ Page" Click="OnAddPageClick" />
+                            <Button Content="+ Page Bar" Click="OnAddPageIndicatorClick" />
+                            <Button Content="+ Spacer" Click="OnAddSpacerClick" />
+                        </UniformGrid>
+
+                        <TextBlock Text="START FROM PRESET PANEL (EDITABLE)" FontWeight="Bold" Foreground="#FF34D399" FontSize="11" Margin="2,8,0,4" />
+                        <UniformGrid Columns="3">
+                            <Button Content="+ EV Hero" Background="#FF0D3B4C" BorderBrush="#FF0284C7" Click="OnAddPresetEvHeroClick" />
+                            <Button Content="+ Tile" Background="#FF0D3B4C" BorderBrush="#FF0284C7" Click="OnAddPresetTileClick" />
+                            <Button Content="+ Pill" Background="#FF0D3B4C" BorderBrush="#FF0284C7" Click="OnAddPresetPillClick" />
+                        </UniformGrid>
+
+                        <TextBlock Text="ARRANGE / RE-PARENT (OR DRAG IN TREE)" FontWeight="Bold" Foreground="#FF7DD3FC" FontSize="11" Margin="2,8,0,4" />
+                        <UniformGrid Columns="4">
+                            <Button Content="Up" ToolTip="Move earlier among siblings" Click="OnMoveUpClick" />
+                            <Button Content="Down" ToolTip="Move later among siblings" Click="OnMoveDownClick" />
+                            <Button Content="Nest &#x2192;" ToolTip="Move into adjacent sibling panel container" Click="OnNestIntoSiblingClick" />
+                            <Button Content="&#x2190; Out" ToolTip="Unnest out of current parent panel up one level" Click="OnUnnestToParentClick" />
+                            <Button Content="Wrap" ToolTip="Wrap selected element in a new [flex_col] group panel" Click="OnWrapInPanelClick" />
+                            <Button x:Name="MoveToBtn" Content="Move To&#x2026;" ToolTip="Pick any panel in the hierarchy to move this item into" Click="OnMoveToPanelClick" />
+                            <Button Content="Dup" ToolTip="Duplicate selected item" Click="OnDuplicateClick" />
+                            <Button Content="Del" ToolTip="Delete selected item" Background="#FF7F1D1D" BorderBrush="#FFEF4444" Click="OnDeleteClick" />
+                        </UniformGrid>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- CENTER: LIVE 1920x720 WYSIWYG STAGE -->
+            <Grid Grid.Column="1" Margin="12">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <DockPanel Grid.Row="0" Margin="0,0,0,8">
+                    <TextBlock x:Name="PackHeaderText" Text="1920x720 Live Automotive Preview" FontWeight="Bold" Foreground="#FFE2E8F0" VerticalAlignment="Center" />
+                    <TextBlock x:Name="FreeformHintText" DockPanel.Dock="Right" Text="Click any panel/element to customize • Drag/resize in [freeform] panels" Foreground="#FF94A3B8" FontSize="12" VerticalAlignment="Center" />
+                </DockPanel>
+
+                <controls:StudioCanvasControl x:Name="StudioCanvas" Grid.Row="1" />
+
+                <Border x:Name="EmptyWorkspaceOverlay" Grid.Row="1"
+                        Background="#FF0B1220" BorderBrush="#FF1E293B" BorderThickness="1" CornerRadius="10" Padding="28" Visibility="Collapsed">
+                    <Grid MaxWidth="660" VerticalAlignment="Center" HorizontalAlignment="Center" Width="620">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <StackPanel Grid.Row="0" Margin="0,0,0,18">
+                            <TextBlock Text="GEN5W STUDIO" FontSize="22" FontWeight="Bold" Foreground="#FF38BDF8" />
+                            <TextBlock Text="Empty workspace — open a recent theme, start a blank layout, or browse community themes on the Theme Store."
+                                       Foreground="#FF94A3B8" FontSize="13" TextWrapping="Wrap" Margin="0,4,0,0" />
+                        </StackPanel>
+
+                        <UniformGrid Grid.Row="1" Columns="3" Margin="0,0,0,22">
+                            <Button Content="+ New Theme..." Background="#FF0F766E" BorderBrush="#FF14B8A6" Padding="12,10" Margin="0,0,6,0" Click="OnNewThemeClick" />
+                            <Button Content="Open Theme / Pack..." Background="#FF1E293B" BorderBrush="#FF334155" Padding="12,10" Margin="3,0" Click="OnOpenFolderClick" />
+                            <Button Content="Browse Theme Store" Background="#FF1E3A8A" BorderBrush="#FF3B82F6" Padding="12,10" Margin="6,0,0,0" Click="OnOpenThemeStoreClick" />
+                        </UniformGrid>
+
+                        <DockPanel Grid.Row="2" Margin="0,0,0,8">
+                            <Button x:Name="ClearRecentBtn" DockPanel.Dock="Right" Content="Clear History" Padding="9,3" FontSize="11" Click="OnClearRecentClick" />
+                            <TextBlock Text="RECENTLY OPENED" FontWeight="Bold" FontSize="12" Foreground="#FF7DD3FC" VerticalAlignment="Center" />
+                        </DockPanel>
+
+                        <Border Grid.Row="3" Background="#FF070D18" BorderBrush="#FF1E293B" BorderThickness="1" CornerRadius="8" Padding="8" MinHeight="160" MaxHeight="290">
+                            <Grid>
+                                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                    <StackPanel x:Name="RecentListHost" />
+                                </ScrollViewer>
+                                <TextBlock x:Name="NoRecentText"
+                                           Text="No recently opened themes or packs yet."
+                                           Foreground="#FF64748B" FontSize="12"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" />
+                            </Grid>
+                        </Border>
+                    </Grid>
+                </Border>
+
+                <Border Grid.Row="2" Background="{StaticResource CardBgBrush}" CornerRadius="6" Padding="10,6" Margin="0,8,0,0">
+                    <DockPanel>
+                        <TextBlock x:Name="ConversionProgressText" DockPanel.Dock="Right" Text="Ready" Foreground="#FF34D399" FontSize="12" VerticalAlignment="Center" />
+                        <TextBlock x:Name="SelectionSummaryText" Text="Select a node on the canvas or tree" Foreground="#FFCBD5E1" FontSize="12" VerticalAlignment="Center" />
+                    </DockPanel>
+                </Border>
+            </Grid>
+
+            <!-- RIGHT: INSPECTOR + BACKDROP/VIDEO CONVERTER -->
+            <Border x:Name="RightInspectorPanel" Grid.Column="2" Background="{StaticResource PanelBgBrush}" BorderBrush="{StaticResource BorderBrushSubtle}" BorderThickness="1,0,0,0">
+                <TabControl x:Name="RightTabs" Background="Transparent" BorderThickness="0">
+                    <TabItem Header="Selected Element">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="12">
+                            <StackPanel x:Name="NodeInspectorPanel" KeyDown="OnInspectorPanelKeyDown">
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <Button x:Name="SelectParentBtn" Grid.Column="0" Content="↑ Select Parent Panel" Click="OnSelectParentClick" />
+                                    <Button x:Name="BreakApartBtn" Grid.Column="1" Content="Break Apart Preset → Panel" Background="#FF0F766E" BorderBrush="#FF14B8A6" Visibility="Collapsed" Click="OnBreakApartClick" />
+                                </Grid>
+
+                                <TextBlock Text="Node ID &amp; Kind" FontWeight="Bold" Foreground="#FF7DD3FC" />
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,4,0">
+                                        <TextBlock Text="ID" Style="{StaticResource FieldLabel}" />
+                                        <TextBox x:Name="NodeIdBox" LostFocus="OnInspectorTextApplied" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Margin="4,0,0,0">
+                                        <TextBlock Text="Kind / Panel Layout" Style="{StaticResource FieldLabel}" />
+                                        <ComboBox x:Name="NodeTypeCombo" SelectionChanged="OnNodeTypeChanged" />
+                                    </StackPanel>
+                                </Grid>
+
+                                <!-- WIDGET CONTENT & TELEMETRY -->
+                                <StackPanel x:Name="WidgetFieldsGroup">
+                                    <StackPanel x:Name="ContentSensorSection">
+                                        <TextBlock x:Name="ContentHeaderText" Text="Content &amp; Sensor Data (HMG-API)" FontWeight="Bold" Foreground="#FF7DD3FC" Margin="0,12,0,2" />
+                                        <StackPanel x:Name="TitleFieldGroup">
+                                            <TextBlock Text="Text / Title (supports {value} or {hv.soc}, {battery12v.soc}, etc.)" Style="{StaticResource FieldLabel}" />
+                                            <TextBox x:Name="TitleBox" LostFocus="OnInspectorTextApplied" />
+                                        </StackPanel>
+
+                                        <Grid x:Name="SubBadgeRow">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition x:Name="SubtitleCol" Width="2*"/>
+                                                <ColumnDefinition x:Name="BadgeCol" Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel x:Name="SubtitleCell" Grid.Column="0" Margin="0,0,4,0">
+                                                <TextBlock Text="Subtitle / Second Line" Style="{StaticResource FieldLabel}" />
+                                                <TextBox x:Name="SubtitleBox" LostFocus="OnInspectorTextApplied" />
+                                            </StackPanel>
+                                            <StackPanel x:Name="BadgeCell" Grid.Column="1" Margin="4,0,0,0">
+                                                <TextBlock Text="Badge Chip" Style="{StaticResource FieldLabel}" />
+                                                <TextBox x:Name="BadgeBox" LostFocus="OnInspectorTextApplied" />
+                                            </StackPanel>
+                                        </Grid>
+
+                                        <StackPanel x:Name="SensorBindGroup">
+                                            <TextBlock Text="Bind Data Sensor (HMG-API — independent per bar / ring / text)" Style="{StaticResource FieldLabel}" />
+                                            <ComboBox x:Name="TelemetryKeyCombo"
+                                                      IsEditable="True"
+                                                      TextSearch.TextPath="Key"
+                                                      SelectionChanged="OnTelemetrySensorChanged"
+                                                      LostFocus="OnInspectorTextApplied">
+                                                <ComboBox.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="{Binding DropdownLabel}" />
+                                                    </DataTemplate>
+                                                </ComboBox.ItemTemplate>
+                                            </ComboBox>
+                                        </StackPanel>
+
+                                        <Grid x:Name="SensorUnitRangeRow">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition x:Name="UnitCol" Width="*"/>
+                                                <ColumnDefinition x:Name="MinValCol" Width="*"/>
+                                                <ColumnDefinition x:Name="MaxValCol" Width="*"/>
+                                                <ColumnDefinition x:Name="BarDirCol" Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel x:Name="UnitCell" Grid.Column="0" Margin="0,0,3,0">
+                                                <TextBlock Text="Unit (optional)" Style="{StaticResource FieldLabel}" />
+                                                <TextBox x:Name="UnitBox" ToolTip="e.g. %, °C, °F, mph, km/h" LostFocus="OnInspectorTextApplied" />
+                                            </StackPanel>
+                                            <StackPanel x:Name="MinValCell" Grid.Column="1" Margin="2,0">
+                                                <TextBlock Text="Bar/Ring Min" Style="{StaticResource FieldLabel}" />
+                                                <TextBox x:Name="MinValBox" LostFocus="OnInspectorTextApplied" />
+                                            </StackPanel>
+                                            <StackPanel x:Name="MaxValCell" Grid.Column="2" Margin="2,0">
+                                                <TextBlock Text="Bar/Ring Max" Style="{StaticResource FieldLabel}" />
+                                                <TextBox x:Name="MaxValBox" LostFocus="OnInspectorTextApplied" />
+                                            </StackPanel>
+                                            <StackPanel x:Name="BarDirCell" Grid.Column="3" Margin="3,0,0,0">
+                                                <TextBlock Text="Bar Dir" Style="{StaticResource FieldLabel}" />
+                                                <ComboBox x:Name="OrientationCombo" SelectionChanged="OnInspectorComboChanged">
+                                                    <ComboBoxItem Content="horizontal" /><ComboBoxItem Content="vertical" />
+                                                </ComboBox>
+                                            </StackPanel>
+                                        </Grid>
+                                        <StackPanel x:Name="SensorOptionsRow" Orientation="Horizontal" Margin="0,6,0,2">
+                                            <CheckBox x:Name="ShowTextCheck" Content="Show Value Text on Bar" Foreground="#FFCBD5E1" Margin="0,0,14,0" Checked="OnInspectorCheckChanged" Unchecked="OnInspectorCheckChanged" />
+                                            <CheckBox x:Name="WrapTextCheck" Content="Wrap Multi-line Text" Foreground="#FFCBD5E1" Checked="OnInspectorCheckChanged" Unchecked="OnInspectorCheckChanged" />
+                                        </StackPanel>
+                                    </StackPanel>
+
+                                    <!-- TYPOGRAPHY -->
+                                    <StackPanel x:Name="TypographySection">
+                                        <TextBlock x:Name="TypographyHeaderText" Text="Typography (Independent per Element)" FontWeight="Bold" Foreground="#FF7DD3FC" Margin="0,12,0,2" />
+                                        <Grid x:Name="FontRow">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <ComboBox x:Name="FontCombo" Grid.Column="0" IsEditable="True" SelectionChanged="OnInspectorComboChanged" LostFocus="OnInspectorTextApplied" />
+                                            <Button Content="+ .TTF/.OTF" Grid.Column="1" ToolTip="Import TrueType/OpenType font into ThemePack fonts/" Click="OnImportFontClick" />
+                                        </Grid>
+                                        <Grid x:Name="FontSizesRow">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition x:Name="TitleSizeCol" Width="*"/>
+                                                <ColumnDefinition x:Name="SubSizeCol" Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel x:Name="TitleSizeCell" Grid.Column="0" Margin="0,0,4,0">
+                                                <TextBlock Text="Font Size (px)" Style="{StaticResource FieldLabel}" />
+                                                <TextBox x:Name="TitleSizeBox" LostFocus="OnInspectorTextApplied" />
+                                            </StackPanel>
+                                            <StackPanel x:Name="SubSizeCell" Grid.Column="1" Margin="4,0,6,0">
+                                                <TextBlock Text="Sub Size (px)" Style="{StaticResource FieldLabel}" />
+                                                <TextBox x:Name="SubSizeBox" LostFocus="OnInspectorTextApplied" />
+                                            </StackPanel>
+                                            <CheckBox x:Name="BoldCheck" Grid.Column="2" Content="Bold" Foreground="#FFF1F5F9" VerticalAlignment="Bottom" Margin="4,0,8,6" Checked="OnInspectorCheckChanged" Unchecked="OnInspectorCheckChanged" />
+                                            <CheckBox x:Name="ItalicCheck" Grid.Column="3" Content="Italic" Foreground="#FFF1F5F9" VerticalAlignment="Bottom" Margin="0,0,2,6" Checked="OnInspectorCheckChanged" Unchecked="OnInspectorCheckChanged" />
+                                        </Grid>
+                                        <Grid x:Name="TextColorsAlignRow">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition x:Name="TextColorCol" Width="*"/>
+                                                <ColumnDefinition x:Name="SubColorCol" Width="*"/>
+                                                <ColumnDefinition x:Name="AlignHCol" Width="*"/>
+                                                <ColumnDefinition x:Name="AlignVCol" Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel x:Name="TextColorCell" Grid.Column="0" Margin="0,0,3,0">
+                                                <TextBlock Text="Text Color" Style="{StaticResource FieldLabel}" />
+                                                <TextBox x:Name="TextColorBox" Style="{StaticResource ColorTextBoxStyle}" LostFocus="OnInspectorTextApplied" />
+                                            </StackPanel>
+                                            <StackPanel x:Name="SubColorCell" Grid.Column="1" Margin="2,0">
+                                                <TextBlock Text="Sub Color" Style="{StaticResource FieldLabel}" />
+                                                <TextBox x:Name="SubColorBox" Style="{StaticResource ColorTextBoxStyle}" LostFocus="OnInspectorTextApplied" />
+                                            </StackPanel>
+                                            <StackPanel x:Name="AlignHCell" Grid.Column="2" Margin="2,0">
+                                                <TextBlock Text="Align H" Style="{StaticResource FieldLabel}" />
+                                                <ComboBox x:Name="AlignCombo" SelectionChanged="OnInspectorComboChanged">
+                                                    <ComboBoxItem Content="left" /><ComboBoxItem Content="center" /><ComboBoxItem Content="right" />
+                                                </ComboBox>
+                                            </StackPanel>
+                                            <StackPanel x:Name="AlignVCell" Grid.Column="3" Margin="3,0,0,0">
+                                                <TextBlock Text="Align V" Style="{StaticResource FieldLabel}" />
+                                                <ComboBox x:Name="VAlignCombo" SelectionChanged="OnInspectorComboChanged">
+                                                    <ComboBoxItem Content="top" /><ComboBoxItem Content="center" /><ComboBoxItem Content="bottom" />
+                                                </ComboBox>
+                                            </StackPanel>
+                                        </Grid>
+                                    </StackPanel>
+
+                                    <!-- ICON / IMAGE / MEDIA -->
+                                    <StackPanel x:Name="IconImageSection">
+                                        <TextBlock x:Name="IconHeaderText" Text="Icon SVG / Picture Image" FontWeight="Bold" Foreground="#FF7DD3FC" Margin="0,12,0,2" />
+                                        <Grid x:Name="IconAssetRow">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <ComboBox x:Name="IconCombo" Grid.Column="0" IsEditable="True" SelectionChanged="OnInspectorComboChanged" LostFocus="OnInspectorTextApplied" />
+                                            <Button Content="+ .SVG" Grid.Column="1" Click="OnImportSvgClick" />
+                                            <Button Content="+ .PNG/.JPG" Grid.Column="2" Click="OnImportImageClick" />
+                                        </Grid>
+                                        <Grid x:Name="IconPropsRow">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition x:Name="IconSizeCol" Width="*"/>
+                                                <ColumnDefinition x:Name="IconTintCol" Width="*"/>
+                                                <ColumnDefinition x:Name="ScaleTypeCol" Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel x:Name="IconSizeCell" Grid.Column="0" Margin="0,0,3,0">
+                                                <TextBlock x:Name="IconSizeLabel" Text="Icon / Ring Size" Style="{StaticResource FieldLabel}" />
+                                                <TextBox x:Name="IconSizeBox" LostFocus="OnInspectorTextApplied" />
+                                            </StackPanel>
+                                            <StackPanel x:Name="IconTintCell" Grid.Column="1" Margin="2,0">
+                                                <TextBlock Text="Icon Tint" Style="{StaticResource FieldLabel}" />
+                                                <TextBox x:Name="IconTintBox" Style="{StaticResource ColorTextBoxStyle}" LostFocus="OnInspectorTextApplied" />
+                                            </StackPanel>
+                                            <StackPanel x:Name="ScaleTypeCell" Grid.Column="2" Margin="3,0,0,0">
+                                                <TextBlock Text="Image Scale" Style="{StaticResource FieldLabel}" />
+                                                <ComboBox x:Name="ScaleTypeCombo" SelectionChanged="OnInspectorComboChanged">
+                                                    <ComboBoxItem Content="fit" /><ComboBoxItem Content="cover" />
+                                                </ComboBox>
+                                            </StackPanel>
+                                        </Grid>
+                                    </StackPanel>
+                                </StackPanel>
+
+                                <!-- PANEL LAYOUT SETTINGS -->
+                                <StackPanel x:Name="PanelFieldsGroup" Visibility="Collapsed">
+                                    <TextBlock Text="Panel Container Settings" FontWeight="Bold" Foreground="#FF7DD3FC" Margin="0,12,0,2" />
+                                    <Grid x:Name="PanelTitlePadRow">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition x:Name="PageTitleCol" Width="*"/>
+                                            <ColumnDefinition x:Name="PaddingCol" Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel x:Name="PageTitleCell" Grid.Column="0" Margin="0,0,4,0">
+                                            <TextBlock Text="Page Tab Title (for pager)" Style="{StaticResource FieldLabel}" />
+                                            <TextBox x:Name="PageTitleBox" LostFocus="OnInspectorTextApplied" />
+                                        </StackPanel>
+                                        <StackPanel x:Name="PaddingCell" Grid.Column="1" Margin="4,0,0,0">
+                                            <TextBlock Text="Inner Padding (L,T,R,B)" Style="{StaticResource FieldLabel}" />
+                                            <TextBox x:Name="PaddingBox" LostFocus="OnInspectorTextApplied" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <Grid x:Name="PanelGridMetricsRow">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition x:Name="ColsCol" Width="*"/>
+                                            <ColumnDefinition x:Name="RowsCol" Width="*"/>
+                                            <ColumnDefinition x:Name="GapCol" Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel x:Name="ColsCell" Grid.Column="0" Margin="0,0,4,0">
+                                            <TextBlock Text="Grid Cols" Style="{StaticResource FieldLabel}" />
+                                            <TextBox x:Name="ColsBox" LostFocus="OnInspectorTextApplied" />
+                                        </StackPanel>
+                                        <StackPanel x:Name="RowsCell" Grid.Column="1" Margin="2,0">
+                                            <TextBlock Text="Grid Rows" Style="{StaticResource FieldLabel}" />
+                                            <TextBox x:Name="RowsBox" LostFocus="OnInspectorTextApplied" />
+                                        </StackPanel>
+                                        <StackPanel x:Name="GapCell" Grid.Column="2" Margin="4,0,0,0">
+                                            <TextBlock Text="Gap Px" Style="{StaticResource FieldLabel}" />
+                                            <TextBox x:Name="GapBox" LostFocus="OnInspectorTextApplied" />
+                                        </StackPanel>
+                                    </Grid>
+                                </StackPanel>
+
+                                <!-- PAGE INDICATOR CUSTOMIZATION ([pager] & page_indicator) -->
+                                <StackPanel x:Name="PagerIndicatorFieldsGroup" Visibility="Collapsed">
+                                    <DockPanel Margin="0,12,0,2">
+                                        <Button x:Name="DisableIndBarBtn" DockPanel.Dock="Right" Content="Remove / Disable Bar" Background="#FF7F1D1D" BorderBrush="#FFEF4444" Padding="8,2" FontSize="11" Click="OnDisableIndicatorBarClick" />
+                                        <TextBlock Text="Page Indicators" FontWeight="Bold" Foreground="#FF7DD3FC" VerticalAlignment="Center" />
+                                    </DockPanel>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="1.5*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" Margin="0,0,4,0">
+                                            <TextBlock Text="Indicator Style / Visibility" Style="{StaticResource FieldLabel}" />
+                                            <ComboBox x:Name="IndModeCombo" SelectionChanged="OnInspectorComboChanged">
+                                                <ComboBoxItem Content="Labeled Pills (Page Titles)" Tag="pills" />
+                                                <ComboBoxItem Content="Compact Dots / Bars" Tag="dots" />
+                                                <ComboBoxItem Content="Page Numbers (1, 2, 3)" Tag="numbers" />
+                                                <ComboBoxItem x:Name="IndModeNoneItem" Content="Disabled (Hidden)" Tag="none" />
+                                            </ComboBox>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Margin="4,0,0,0">
+                                            <TextBlock Text="Strip Alignment" Style="{StaticResource FieldLabel}" />
+                                            <ComboBox x:Name="IndAlignCombo" SelectionChanged="OnInspectorComboChanged">
+                                                <ComboBoxItem Content="center" />
+                                                <ComboBoxItem Content="left" />
+                                                <ComboBoxItem Content="right" />
+                                            </ComboBox>
+                                        </StackPanel>
+                                    </Grid>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="62"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" Margin="0,0,4,0">
+                                            <TextBlock Text="Indicator Font" Style="{StaticResource FieldLabel}" />
+                                            <ComboBox x:Name="IndFontCombo" IsEditable="True" SelectionChanged="OnInspectorComboChanged" LostFocus="OnInspectorTextApplied" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Margin="2,0">
+                                            <TextBlock Text="Text px" Style="{StaticResource FieldLabel}" />
+                                            <TextBox x:Name="IndTextSizeBox" LostFocus="OnInspectorTextApplied" />
+                                        </StackPanel>
+                                        <CheckBox x:Name="IndBoldCheck" Grid.Column="2" Content="B" ToolTip="Bold Indicator Text" Foreground="#FFF1F5F9" VerticalAlignment="Bottom" Margin="4,0,6,6" Checked="OnInspectorCheckChanged" Unchecked="OnInspectorCheckChanged" />
+                                        <CheckBox x:Name="IndItalicCheck" Grid.Column="3" Content="I" ToolTip="Italic Indicator Text" Foreground="#FFF1F5F9" VerticalAlignment="Bottom" Margin="0,0,2,6" Checked="OnInspectorCheckChanged" Unchecked="OnInspectorCheckChanged" />
+                                    </Grid>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" Margin="0,0,3,0"><TextBlock Text="Active Text" Style="{StaticResource FieldLabel}" /><TextBox x:Name="IndActiveTextBox" Style="{StaticResource ColorTextBoxStyle}" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                        <StackPanel Grid.Column="1" Margin="2,0"><TextBlock Text="Active Fill" Style="{StaticResource FieldLabel}" /><TextBox x:Name="IndActiveFillBox" Style="{StaticResource ColorTextBoxStyle}" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                        <StackPanel Grid.Column="2" Margin="3,0,0,0"><TextBlock Text="Active Border" Style="{StaticResource FieldLabel}" /><TextBox x:Name="IndActiveBorderBox" Style="{StaticResource ColorTextBoxStyle}" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                    </Grid>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" Margin="0,0,3,0"><TextBlock Text="Inactive Text" Style="{StaticResource FieldLabel}" /><TextBox x:Name="IndInactiveTextBox" Style="{StaticResource ColorTextBoxStyle}" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                        <StackPanel Grid.Column="1" Margin="2,0"><TextBlock Text="Inactive Fill" Style="{StaticResource FieldLabel}" /><TextBox x:Name="IndInactiveFillBox" Style="{StaticResource ColorTextBoxStyle}" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                        <StackPanel Grid.Column="2" Margin="3,0,0,0"><TextBlock Text="Inactive Border" Style="{StaticResource FieldLabel}" /><TextBox x:Name="IndInactiveBorderBox" Style="{StaticResource ColorTextBoxStyle}" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                    </Grid>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" Margin="0,0,3,0"><TextBlock Text="Radius px" Style="{StaticResource FieldLabel}" /><TextBox x:Name="IndRadiusBox" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                        <StackPanel Grid.Column="1" Margin="2,0"><TextBlock Text="Border px" Style="{StaticResource FieldLabel}" /><TextBox x:Name="IndBorderWidthBox" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                        <StackPanel Grid.Column="2" Margin="3,0,0,0"><TextBlock Text="Gap px" Style="{StaticResource FieldLabel}" /><TextBox x:Name="IndGapBox" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                    </Grid>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" Margin="0,0,2,0"><TextBlock Text="Pad X" Style="{StaticResource FieldLabel}" /><TextBox x:Name="IndPadXBox" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                        <StackPanel Grid.Column="1" Margin="2,0"><TextBlock Text="Pad Y" Style="{StaticResource FieldLabel}" /><TextBox x:Name="IndPadYBox" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                        <StackPanel Grid.Column="2" Margin="2,0"><TextBlock Text="Dot W" Style="{StaticResource FieldLabel}" /><TextBox x:Name="IndDotWBox" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                        <StackPanel Grid.Column="3" Margin="2,0"><TextBlock Text="Dot H" Style="{StaticResource FieldLabel}" /><TextBox x:Name="IndDotHBox" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                        <StackPanel Grid.Column="4" Margin="2,0,0,0"><TextBlock Text="Act W" ToolTip="Active Dot Width (optional, 0 = same as Dot W)" Style="{StaticResource FieldLabel}" /><TextBox x:Name="IndActiveDotWBox" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                    </Grid>
+                                </StackPanel>
+
+                                <!-- TAP ACTION (AVAILABLE FOR BOTH PANELS AND ELEMENTS) -->
+                                <StackPanel x:Name="ActionFieldsGroup">
+                                    <DockPanel Margin="0,12,0,2">
+                                        <Button DockPanel.Dock="Right" Content="Clear (none)" Padding="6,2" FontSize="11" Click="OnClearActionClick" />
+                                        <TextBlock Text="Tap Action" FontWeight="Bold" Foreground="#FF7DD3FC" VerticalAlignment="Center" />
+                                    </DockPanel>
+                                    <TextBlock x:Name="ActionScopeHint" Text="Whole-panel tap selector" Foreground="#FF94A3B8" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,4" />
+                                    <ComboBox x:Name="PresetCombo" SelectionChanged="OnPresetSelected">
+                                        <ComboBox.ItemContainerStyle>
+                                            <Style TargetType="ComboBoxItem">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsHeader}" Value="True">
+                                                        <Setter Property="IsEnabled" Value="False" />
+                                                        <Setter Property="Focusable" Value="False" />
+                                                        <Setter Property="FontWeight" Value="Bold" />
+                                                        <Setter Property="FontSize" Value="11" />
+                                                        <Setter Property="Background" Value="#FFE2E8F0" />
+                                                        <Setter Property="BorderBrush" Value="#FFCBD5E1" />
+                                                        <Setter Property="BorderThickness" Value="0,1,0,1" />
+                                                        <Setter Property="HorizontalContentAlignment" Value="Center" />
+                                                        <Setter Property="Padding" Value="6,6,6,5" />
+                                                        <Setter Property="Margin" Value="0,3,0,1" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </ComboBox.ItemContainerStyle>
+                                    </ComboBox>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" Margin="0,0,4,0">
+                                            <TextBlock Text="Action Type" Style="{StaticResource FieldLabel}" />
+                                            <TextBox x:Name="ActionTypeBox" LostFocus="OnInspectorTextApplied" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Margin="4,0,0,0">
+                                            <TextBlock Text="Preset Cmd / Page" Style="{StaticResource FieldLabel}" />
+                                            <TextBox x:Name="ActionCmdBox" LostFocus="OnInspectorTextApplied" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" Margin="0,0,4,0">
+                                            <TextBlock Text="Package (optional)" Style="{StaticResource FieldLabel}" />
+                                            <TextBox x:Name="ActionPkgBox" LostFocus="OnInspectorTextApplied" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Margin="4,0,0,0">
+                                            <TextBlock Text="Class / IntentAction" Style="{StaticResource FieldLabel}" />
+                                            <TextBox x:Name="ActionClsBox" LostFocus="OnInspectorTextApplied" />
+                                        </StackPanel>
+                                    </Grid>
+                                </StackPanel>
+
+                                <!-- GEOMETRY & MARGINS -->
+                                <StackPanel x:Name="GeometrySectionGroup">
+                                    <TextBlock Text="Geometry, Alignment &amp; Bounds" FontWeight="Bold" Foreground="#FF7DD3FC" Margin="0,12,0,2" />
+                                    <Grid x:Name="SizeRow">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition x:Name="WidthCol" Width="*"/>
+                                            <ColumnDefinition x:Name="HeightCol" Width="*"/>
+                                            <ColumnDefinition x:Name="FlexCol" Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel x:Name="WidthCell" Grid.Column="0" Margin="0,0,4,0"><TextBlock Text="Width (px)" Style="{StaticResource FieldLabel}" /><TextBox x:Name="WidthBox" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                        <StackPanel x:Name="HeightCell" Grid.Column="1" Margin="2,0"><TextBlock Text="Height (px)" Style="{StaticResource FieldLabel}" /><TextBox x:Name="HeightBox" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                        <StackPanel x:Name="FlexCell" Grid.Column="2" Margin="4,0,0,0"><TextBlock Text="FlexWeight" Style="{StaticResource FieldLabel}" /><TextBox x:Name="FlexBox" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                    </Grid>
+                                    <Grid x:Name="GridSpanRow">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition x:Name="ColSpanCol" Width="*"/>
+                                            <ColumnDefinition x:Name="RowSpanCol" Width="*"/>
+                                            <ColumnDefinition x:Name="NodeHAlignCol" Width="*"/>
+                                            <ColumnDefinition x:Name="MarginCol" Width="1.5*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel x:Name="ColSpanCell" Grid.Column="0" Margin="0,0,3,0"><TextBlock Text="ColSpan" Style="{StaticResource FieldLabel}" /><TextBox x:Name="ColSpanBox" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                        <StackPanel x:Name="RowSpanCell" Grid.Column="1" Margin="2,0"><TextBlock Text="RowSpan" Style="{StaticResource FieldLabel}" /><TextBox x:Name="RowSpanBox" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                        <StackPanel x:Name="NodeHAlignCell" Grid.Column="2" Margin="2,0">
+                                            <TextBlock Text="Align H" Style="{StaticResource FieldLabel}" />
+                                            <ComboBox x:Name="NodeHAlignCombo" SelectionChanged="OnInspectorComboChanged">
+                                                <ComboBoxItem Content="auto" Tag="" /><ComboBoxItem Content="left" Tag="left" /><ComboBoxItem Content="center" Tag="center" /><ComboBoxItem Content="right" Tag="right" />
+                                            </ComboBox>
+                                        </StackPanel>
+                                        <StackPanel x:Name="MarginCell" Grid.Column="3" Margin="3,0,0,0"><TextBlock Text="Margin (L,T,R,B)" Style="{StaticResource FieldLabel}" /><TextBox x:Name="MarginBox" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                    </Grid>
+                                    <Grid x:Name="BoundsRow">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" Margin="0,0,3,0"><TextBlock Text="FF X" Style="{StaticResource FieldLabel}" /><TextBox x:Name="BoundsXBox" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                        <StackPanel Grid.Column="1" Margin="2,0"><TextBlock Text="FF Y" Style="{StaticResource FieldLabel}" /><TextBox x:Name="BoundsYBox" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                        <StackPanel Grid.Column="2" Margin="2,0"><TextBlock Text="FF W" Style="{StaticResource FieldLabel}" /><TextBox x:Name="BoundsWBox" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                        <StackPanel Grid.Column="3" Margin="3,0,0,0"><TextBlock Text="FF H" Style="{StaticResource FieldLabel}" /><TextBox x:Name="BoundsHBox" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                    </Grid>
+                                </StackPanel>
+
+                                <!-- CARD COLORS & EFFECTS -->
+                                <StackPanel x:Name="StyleSectionGroup">
+                                    <TextBlock Text="Colors, Borders &amp; Animation" FontWeight="Bold" Foreground="#FF7DD3FC" Margin="0,12,0,2" />
+                                    <Grid x:Name="BgGradientRow">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" Margin="0,0,4,0"><TextBlock Text="Bg / Track Color" Style="{StaticResource FieldLabel}" /><TextBox x:Name="BgColorBox" Style="{StaticResource ColorTextBoxStyle}" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                        <StackPanel Grid.Column="1" Margin="4,0,0,0"><TextBlock Text="Bg / Bar End Gradient" Style="{StaticResource FieldLabel}" /><TextBox x:Name="BgEndBox" Style="{StaticResource ColorTextBoxStyle}" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                    </Grid>
+                                    <Grid x:Name="BorderAccentRadiusRow">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition x:Name="BorderColorCol" Width="*"/>
+                                            <ColumnDefinition x:Name="AccentColorCol" Width="*"/>
+                                            <ColumnDefinition x:Name="RadiusCol" Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel x:Name="BorderColorCell" Grid.Column="0" Margin="0,0,3,0"><TextBlock x:Name="BorderColorLabel" Text="Border Color" Style="{StaticResource FieldLabel}" /><TextBox x:Name="BorderColorBox" Style="{StaticResource ColorTextBoxStyle}" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                        <StackPanel x:Name="AccentColorCell" Grid.Column="1" Margin="2,0"><TextBlock Text="Accent / Bar Fill" Style="{StaticResource FieldLabel}" /><TextBox x:Name="AccentColorBox" Style="{StaticResource ColorTextBoxStyle}" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                        <StackPanel x:Name="RadiusCell" Grid.Column="2" Margin="3,0,0,0"><TextBlock Text="Radius px" Style="{StaticResource FieldLabel}" /><TextBox x:Name="RadiusBox" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                    </Grid>
+                                    <Grid x:Name="BorderOpacityIdleRow">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition x:Name="BorderWidthCol" Width="*"/>
+                                            <ColumnDefinition x:Name="OpacityCol" Width="*"/>
+                                            <ColumnDefinition x:Name="IdleEffectCol" Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel x:Name="BorderWidthCell" Grid.Column="0" Margin="0,0,3,0"><TextBlock Text="Border px" Style="{StaticResource FieldLabel}" /><TextBox x:Name="BorderWidthBox" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                        <StackPanel x:Name="OpacityCell" Grid.Column="1" Margin="2,0"><TextBlock Text="Opacity (0-1)" Style="{StaticResource FieldLabel}" /><TextBox x:Name="OpacityBox" LostFocus="OnInspectorTextApplied" /></StackPanel>
+                                        <StackPanel x:Name="IdleEffectCell" Grid.Column="2" Margin="3,0,0,0">
+                                            <TextBlock Text="Idle Animation" Style="{StaticResource FieldLabel}" />
+                                            <ComboBox x:Name="IdleEffectCombo" SelectionChanged="OnInspectorComboChanged" />
+                                        </StackPanel>
+                                    </Grid>
+                                    <Grid x:Name="TileAnimRow">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" Margin="0,0,4,0">
+                                            <TextBlock Text="Card / Animated Background Media Ref" Style="{StaticResource FieldLabel}" />
+                                            <TextBox x:Name="TileAnimBox" LostFocus="OnInspectorTextApplied" />
+                                        </StackPanel>
+                                        <Button Grid.Column="1" Content="+ Anim Bg" VerticalAlignment="Bottom" Margin="0,0,0,1" Click="OnImportTileAnimClick" />
+                                    </Grid>
+                                    <CheckBox x:Name="TransparentCheck" Content="Transparent Container (No Card Fill)" Foreground="#FFCBD5E1" Margin="0,8,0,8" Checked="OnInspectorCheckChanged" Unchecked="OnInspectorCheckChanged" />
+                                </StackPanel>
+                                <Button Content="Apply Property Edits" Background="#FF0E4A6F" BorderBrush="#FF38BDF8" Margin="0,8,0,12" Click="OnApplyInspectorButtonClick" />
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabItem>
+
+                    <TabItem Header="Theme &amp; Video Bg">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="12">
+                            <StackPanel>
+                                <TextBlock Text="ThemePack Metadata" FontWeight="Bold" Foreground="#FF7DD3FC" />
+                                <TextBlock Text="Pack ID (USB folder name)" Style="{StaticResource FieldLabel}" />
+                                <TextBox x:Name="PackIdBox" LostFocus="OnThemeMetaApplied" />
+                                <TextBlock Text="Theme Display Name" Style="{StaticResource FieldLabel}" />
+                                <TextBox x:Name="PackNameBox" LostFocus="OnThemeMetaApplied" />
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,4,0"><TextBlock Text="Author" Style="{StaticResource FieldLabel}" /><TextBox x:Name="PackAuthorBox" LostFocus="OnThemeMetaApplied" /></StackPanel>
+                                    <StackPanel Grid.Column="1" Margin="4,0,0,0"><TextBlock Text="Version" Style="{StaticResource FieldLabel}" /><TextBox x:Name="PackVersionBox" LostFocus="OnThemeMetaApplied" /></StackPanel>
+                                </Grid>
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="0.7*"/><ColumnDefinition Width="1.3*"/></Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,4,0">
+                                        <TextBlock Text="Revision" Style="{StaticResource FieldLabel}" />
+                                        <DockPanel>
+                                            <Button Content="+1" DockPanel.Dock="Right" Padding="6,2" Margin="4,0,0,0" ToolTip="Bump revision number" Click="OnBumpRevisionMetaClick" />
+                                            <TextBox x:Name="PackRevisionBox" LostFocus="OnThemeMetaApplied" />
+                                        </DockPanel>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Margin="4,0,0,0">
+                                        <TextBlock Text="Store Category" Style="{StaticResource FieldLabel}" />
+                                        <ComboBox x:Name="PackCategoryCombo" SelectionChanged="OnPackMetaComboChanged" />
+                                    </StackPanel>
+                                </Grid>
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="1.1*"/><ColumnDefinition Width="0.9*"/></Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,4,0">
+                                        <TextBlock Text="Compatible Versions" Style="{StaticResource FieldLabel}" />
+                                        <TextBox x:Name="PackCompatBox" ToolTip="Comma-separated supported app versions (e.g. 0.3.4+)" LostFocus="OnThemeMetaApplied" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Margin="4,0,0,0">
+                                        <TextBlock Text="Updated (UTC)" Style="{StaticResource FieldLabel}" />
+                                        <TextBox x:Name="PackUpdatedText" IsReadOnly="True" Opacity="0.8" />
+                                    </StackPanel>
+                                </Grid>
+                                <TextBlock Text="Description / Release Notes" Style="{StaticResource FieldLabel}" />
+                                <TextBox x:Name="PackDescBox" Height="48" TextWrapping="Wrap" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" LostFocus="OnThemeMetaApplied" />
+                                <Grid Margin="0,8,0,4">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="6"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                    <Button Grid.Column="0" Content="Export Safe .zip..." Background="#FF1D4ED8" BorderBrush="#FF3B82F6" ToolTip="Export ONLY this active theme to a safe .zip with screenshot thumbnail" Click="OnExportSafeThemeZipClick" />
+                                    <Button Grid.Column="2" Content="Upload to Theme Store" Background="#FF065F46" BorderBrush="#FF10B981" ToolTip="Package &amp; upload ONLY this active theme to market.ioniqthemes.com" Click="OnUploadThemeStoreClick" />
+                                </Grid>
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,4,0">
+                                        <TextBlock Text="Speed / Distance Unit" Style="{StaticResource FieldLabel}" />
+                                        <ComboBox x:Name="ThemeSpeedUnitCombo" SelectionChanged="OnBgModeChanged">
+                                            <ComboBoxItem Content="MPH / mi (US)" Tag="mph" />
+                                            <ComboBoxItem Content="km/h / km (Metric)" Tag="kmh" />
+                                        </ComboBox>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Margin="4,0,0,0">
+                                        <TextBlock Text="Temperature Unit" Style="{StaticResource FieldLabel}" />
+                                        <ComboBox x:Name="ThemeTempUnitCombo" SelectionChanged="OnBgModeChanged">
+                                            <ComboBoxItem Content="&#x00B0;F (Fahrenheit)" Tag="F" />
+                                            <ComboBoxItem Content="&#x00B0;C (Celsius)" Tag="C" />
+                                        </ComboBox>
+                                    </StackPanel>
+                                </Grid>
+
+                                <TextBlock Text="Live Car Telemetry Simulator" FontWeight="Bold" Foreground="#FF7DD3FC" Margin="0,14,0,4" />
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="112"/></Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                                    <TextBlock Grid.Row="0" Grid.Column="0" Text="12V Aux %" Foreground="#FF94A3B8" VerticalAlignment="Center" Margin="0,0,8,4" />
+                                    <Slider x:Name="Aux12Slider" Grid.Row="0" Grid.Column="1" Minimum="0" Maximum="100" Value="92" VerticalAlignment="Center" Margin="0,0,6,4" ValueChanged="OnSimChanged" />
+                                    <TextBlock x:Name="Aux12Readout" Grid.Row="0" Grid.Column="2" Text="92%" Foreground="#FF38BDF8" VerticalAlignment="Center" />
+
+                                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Pack Min Temp" Foreground="#FF94A3B8" VerticalAlignment="Center" Margin="0,0,8,4" />
+                                    <Slider x:Name="PackTempSlider" Grid.Row="1" Grid.Column="1" Minimum="-20" Maximum="60" Value="22" VerticalAlignment="Center" Margin="0,0,6,4" ValueChanged="OnSimChanged" />
+                                    <TextBlock x:Name="PackTempReadout" Grid.Row="1" Grid.Column="2" Text="72&#x00B0;F (22&#x00B0;C)" Foreground="#FF34D399" VerticalAlignment="Center" />
+
+                                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Vehicle Speed" Foreground="#FF94A3B8" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                    <Slider x:Name="SpeedSlider" Grid.Row="2" Grid.Column="1" Minimum="0" Maximum="160" Value="0" VerticalAlignment="Center" Margin="0,0,6,0" ValueChanged="OnSimChanged" />
+                                    <TextBlock x:Name="SpeedReadout" Grid.Row="2" Grid.Column="2" Text="0 km/h (0 mph)" Foreground="#FFF1F5F9" VerticalAlignment="Center" />
+                                </Grid>
+
+                                <TextBlock Text="Backdrop Renderer" FontWeight="Bold" Foreground="#FF7DD3FC" Margin="0,14,0,2" />
+                                <TextBlock Text="Backdrop Mode" Style="{StaticResource FieldLabel}" />
+                                <ComboBox x:Name="BgModeCombo" SelectionChanged="OnBgModeChanged" />
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,4,0"><TextBlock Text="Primary Color" Style="{StaticResource FieldLabel}" /><TextBox x:Name="BgPrimaryBox" Style="{StaticResource ColorTextBoxStyle}" LostFocus="OnThemeMetaApplied" /></StackPanel>
+                                    <StackPanel Grid.Column="1" Margin="4,0,0,0"><TextBlock Text="Secondary Color" Style="{StaticResource FieldLabel}" /><TextBox x:Name="BgSecondaryBox" Style="{StaticResource ColorTextBoxStyle}" LostFocus="OnThemeMetaApplied" /></StackPanel>
+                                </Grid>
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Margin="0,0,4,0"><TextBlock Text="Accent Glow" Style="{StaticResource FieldLabel}" /><TextBox x:Name="BgAccentBox" Style="{StaticResource ColorTextBoxStyle}" LostFocus="OnThemeMetaApplied" /></StackPanel>
+                                    <StackPanel Grid.Column="1" Margin="4,0,0,0"><TextBlock Text="Media Dim Scrim" Style="{StaticResource FieldLabel}" /><TextBox x:Name="BgDimBox" Style="{StaticResource ColorTextBoxStyle}" LostFocus="OnThemeMetaApplied" /></StackPanel>
+                                </Grid>
+                                <Button Content="Import Static Wallpaper Image (.png / .jpg)..." Margin="0,10,0,4" Click="OnImportWallpaperClick" />
+
+                                <Border Background="#FF162235" BorderBrush="#FF263B59" BorderThickness="1" CornerRadius="8" Padding="10" Margin="0,12,0,0">
+                                    <StackPanel>
+                                        <TextBlock Text="Video / GIF -> Car Animated Format Converter" FontWeight="Bold" Foreground="#FF34D399" />
+                                        <TextBlock Text="Converts .mp4, .mov, .wmv, .avi, or .gif natively via Windows Media Foundation into car-safe VPU-free frame loops (8:3 center-cropped for KitKat TCC803x)."
+                                                   TextWrapping="Wrap" Foreground="#FF94A3B8" FontSize="11" Margin="0,4,0,6" />
+                                        <TextBlock Text="Output Resolution" Style="{StaticResource FieldLabel}" />
+                                        <ComboBox x:Name="VideoResCombo" SelectedIndex="0">
+                                            <ComboBoxItem Content="960 x 360 (Recommended Car Wallpaper)" Tag="960,360" />
+                                            <ComboBoxItem Content="1280 x 480 (HD Wallpaper)" Tag="1280,480" />
+                                            <ComboBoxItem Content="640 x 240 (Ultra Fast / Compact)" Tag="640,240" />
+                                        </ComboBox>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                            <StackPanel Grid.Column="0" Margin="0,0,4,0">
+                                                <TextBlock Text="Target FPS" Style="{StaticResource FieldLabel}" />
+                                                <TextBox x:Name="VideoFpsBox" Text="16" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Margin="4,0,0,0">
+                                                <TextBlock Text="Max Clip Sec" Style="{StaticResource FieldLabel}" />
+                                                <TextBox x:Name="VideoSecBox" Text="6" />
+                                            </StackPanel>
+                                        </Grid>
+                                        <Button x:Name="ConvertVideoBgBtn" Content="Convert Video / GIF as Wallpaper..." Background="#FF065F46" BorderBrush="#FF10B981" Margin="0,10,0,2" Click="OnImportVideoWallpaperClick" />
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </TabItem>
+                </TabControl>
+            </Border>
+        </Grid>
+
+        <!-- BOTTOM STATUS BAR -->
+        <Border Grid.Row="2" Background="#FF070C14" BorderBrush="{StaticResource BorderBrushSubtle}" BorderThickness="0,1,0,0" Padding="12,5">
+            <DockPanel>
+                <TextBlock x:Name="WorkspacePathText" DockPanel.Dock="Right" Foreground="#FF64748B" FontSize="11" />
+                <TextBlock x:Name="StatusFooterText" Text="Ready" Foreground="#FF94A3B8" FontSize="12" />
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>
