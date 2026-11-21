@@ -45,6 +45,7 @@ final class SwitcherOverlayDialog extends FrameLayout {
     private final TextView packDetail;
     private final TextView confirmBtn;
     private final TextView testBtn;
+    private final TextView promptChooserBtn;
 
     SwitcherOverlayDialog(Context context, SafeClickSoundPlayer sound, Actions actions) {
         super(context);
@@ -92,11 +93,25 @@ final class SwitcherOverlayDialog extends FrameLayout {
         statusSummary = addHeading(context, leftCol, "Checking home-switcher...");
         failsafeDetail = addMono(context, leftCol, "");
 
+        promptChooserBtn = makeBtn(context, "Choose Default Home App (System Prompt)", 0xFF065F46, 0xFF34D399);
+        promptChooserBtn.setGravity(Gravity.CENTER);
+        promptChooserBtn.setOnClickListener(new OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                SwitcherOverlayDialog.this.sound.playClick(v);
+                SwitcherOverlayDialog.this.actions.onSendSwitcherCmd("PROMPT_CHOOSER");
+            }
+        });
+        LinearLayout.LayoutParams pcp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        pcp.topMargin = 14;
+        leftCol.addView(promptChooserBtn, pcp);
+
         LinearLayout btnRow1 = new LinearLayout(context);
         btnRow1.setOrientation(LinearLayout.HORIZONTAL);
         LinearLayout.LayoutParams r1p = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        r1p.topMargin = 14;
+        r1p.topMargin = 10;
 
         testBtn = makeBtn(context, "Test Custom Home (45s)", 0xFF0E4A6F, 0xFF38BDF8);
         testBtn.setOnClickListener(new OnClickListener() {
@@ -209,6 +224,8 @@ final class SwitcherOverlayDialog extends FrameLayout {
     }
 
     void update(SwitcherClient.Status st, TelemetryModel.Snapshot tel) {
+        boolean chooserPending = st.activeHome != null
+                && (st.activeHome.startsWith("android/") || st.activeHome.contains("ResolverActivity"));
         if (!st.serviceReachable) {
             statusSummary.setText("home-switcher service OFFLINE");
             statusSummary.setTextColor(0xFFFCA5A5);
@@ -221,13 +238,19 @@ final class SwitcherOverlayDialog extends FrameLayout {
         } else if (st.isCustomHome) {
             statusSummary.setText("Gen5W Home is DEFAULT HOME");
             statusSummary.setTextColor(0xFF34D399);
+        } else if (chooserPending) {
+            statusSummary.setText("Press HOME Button to Pick Default Launcher");
+            statusSummary.setTextColor(0xFFFCD34D);
         } else {
             statusSummary.setText("Stock Launcher_WP3 is active HOME");
             statusSummary.setTextColor(0xFF38BDF8);
         }
 
-        confirmBtn.setEnabled(st.serviceReachable && st.isCustomHome);
+        promptChooserBtn.setEnabled(st.serviceReachable);
+        promptChooserBtn.setAlpha(promptChooserBtn.isEnabled() ? 1.0f : 0.45f);
+        confirmBtn.setEnabled(st.serviceReachable);
         confirmBtn.setAlpha(confirmBtn.isEnabled() ? 1.0f : 0.45f);
+        confirmBtn.setText(st.isCustomHome && st.homeEnabled ? "Default Home Confirmed \u2713" : "Set & Confirm Default Home");
         testBtn.setEnabled(st.serviceReachable);
 
         StringBuilder fs = new StringBuilder();

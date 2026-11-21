@@ -29,15 +29,18 @@ public final class HorizontalPagerView extends ViewGroup {
         void onPageSelected(int index);
     }
 
+    private static final int INVALID_POINTER = -1;
     private final Scroller scroller;
     private final int touchSlop;
     private final int minFlingVel;
     private VelocityTracker velocityTracker;
+    private int activePointerId = INVALID_POINTER;
     private float lastX;
     private float startX;
     private float startY;
     private boolean dragging = false;
     private int currentPage = 0;
+    private int lastLayoutWidth = -1;
     private final List<String> pageTitles = new ArrayList<String>();
     private final List<OnPageChangeListener> listeners = new ArrayList<OnPageChangeListener>();
 
@@ -137,7 +140,15 @@ public final class HorizontalPagerView extends ViewGroup {
             int left = i * w;
             getChildAt(i).layout(left, 0, left + w, h);
         }
-        scrollTo(currentPage * w, 0);
+        // Only snap scrollX on initial layout or genuine viewport width changes —
+        // never snap mid-drag or mid-scroll when a child TextView updates telemetry at 100ms!
+        if (w > 0 && w != lastLayoutWidth) {
+            lastLayoutWidth = w;
+            if (!scroller.isFinished()) {
+                scroller.abortAnimation();
+            }
+            scrollTo(currentPage * w, 0);
+        }
     }
 
     @Override
@@ -151,29 +162,50 @@ public final class HorizontalPagerView extends ViewGroup {
         }
         switch (action) {
             case MotionEvent.ACTION_DOWN:
-                startX = ev.getX();
-                startY = ev.getY();
+                activePointerId = ev.getPointerId(0);
+                startX = ev.getX(0);
+                startY = ev.getY(0);
                 lastX = startX;
-                dragging = !scroller.isFinished();
-                if (dragging) {
+                if (!scroller.isFinished()) {
+                    scroller.computeScrollOffset();
+                    int remaining = Math.abs(scroller.getFinalX() - scroller.getCurrX());
                     scroller.abortAnimation();
+                    if (remaining > touchSlop) {
+                        dragging = true;
+                        requestDisallowIntercept(true);
+                    } else {
+                        scrollTo(scroller.getFinalX(), 0);
+                        dragging = false;
+                    }
+                } else {
+                    dragging = false;
                 }
                 initVelocityTracker(ev);
                 break;
             case MotionEvent.ACTION_MOVE: {
-                float dx = Math.abs(ev.getX() - startX);
-                float dy = Math.abs(ev.getY() - startY);
+                int pIdx = activePointerId == INVALID_POINTER ? -1 : ev.findPointerIndex(activePointerId);
+                if (pIdx < 0) {
+                    break;
+                }
+                float x = ev.getX(pIdx);
+                float y = ev.getY(pIdx);
+                float dx = Math.abs(x - startX);
+                float dy = Math.abs(y - startY);
                 if (dx > touchSlop && dx > dy * 1.2f) {
                     dragging = true;
-                    lastX = ev.getX();
+                    lastX = x;
                     requestDisallowIntercept(true);
                     return true;
                 }
                 break;
             }
+            case MotionEvent.ACTION_POINTER_UP:
+                onSecondaryPointerUp(ev);
+                break;
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL:
                 dragging = false;
+                activePointerId = INVALID_POINTER;
                 recycleVelocityTracker();
                 break;
             default:
@@ -188,17 +220,23 @@ public final class HorizontalPagerView extends ViewGroup {
             return false;
         }
         initVelocityTracker(ev);
-        velocityTracker.addMovement(ev);
         switch (ev.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
                 if (!scroller.isFinished()) {
                     scroller.abortAnimation();
                 }
-                lastX = ev.getX();
+                activePointerId = ev.getPointerId(0);
+                lastX = ev.getX(0);
                 startX = lastX;
                 break;
             case MotionEvent.ACTION_MOVE: {
-                float x = ev.getX();
+                int pIdx = activePointerId == INVALID_POINTER ? 0 : ev.findPointerIndex(activePointerId);
+                if (pIdx < 0) {
+                    pIdx = 0;
+                    activePointerId = ev.getPointerId(0);
+                    lastX = ev.getX(0);
+                }
+                float x = ev.getX(pIdx);
                 int dx = Math.round(lastX - x);
                 lastX = x;
                 int maxScroll = Math.max(0, (getChildCount() - 1) * getWidth());
@@ -206,18 +244,36 @@ public final class HorizontalPagerView extends ViewGroup {
                 scrollTo(nextScroll, 0);
                 break;
             }
-            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_POINTER_UP:
+                onSecondaryPointerUp(ev);
+                break;
             case MotionEvent.ACTION_CANCEL: {
-                velocityTracker.computeCurrentVelocity(1000);
-                float vx = velocityTracker.getXVelocity();
                 recycleVelocityTracker();
                 dragging = false;
+                activePointerId = INVALID_POINTER;
                 int w = Math.max(1, getWidth());
+                setCurrentPage(Math.round((float) getScrollX() / w), true);
+                break;
+            }
+            case MotionEvent.ACTION_UP: {
+                velocityTracker.computeCurrentVelocity(1000);
+                float vx = activePointerId != INVALID_POINTER
+                        ? velocityTracker.getXVelocity(activePointerId)
+                        : velocityTracker.getXVelocity();
+                int pIdx = activePointerId == INVALID_POINTER ? -1 : ev.findPointerIndex(activePointerId);
+                float endX = pIdx >= 0 ? ev.getX(pIdx) : lastX;
+                float totalDeltaX = endX - startX;
+                recycleVelocityTracker();
+                dragging = false;
+                activePointerId = INVALID_POINTER;
+                int w = Math.max(1, getWidth());
+                int scrollX = Math.max(0, getScrollX());
+                int leftPage = scrollX / w;
                 int target;
-                if (Math.abs(vx) > Math.max(400, minFlingVel)) {
-                    target = vx < 0 ? currentPage + 1 : currentPage - 1;
+                if (Math.abs(totalDeltaX) > touchSlop * 2 && Math.abs(vx) > Math.max(400, minFlingVel)) {
+                    target = vx < 0 ? leftPage + 1 : leftPage;
                 } else {
-                    target = Math.round((float) getScrollX() / w);
+                    target = Math.round((float) scrollX / w);
                 }
                 setCurrentPage(target, true);
                 break;
@@ -226,6 +282,18 @@ public final class HorizontalPagerView extends ViewGroup {
                 break;
         }
         return true;
+    }
+
+    private void onSecondaryPointerUp(MotionEvent ev) {
+        int pointerIndex = ev.getActionIndex();
+        int pointerId = ev.getPointerId(pointerIndex);
+        if (pointerId == activePointerId) {
+            int newIndex = pointerIndex == 0 ? 1 : 0;
+            if (newIndex < ev.getPointerCount()) {
+                lastX = ev.getX(newIndex);
+                activePointerId = ev.getPointerId(newIndex);
+            }
+        }
     }
 
     @Override

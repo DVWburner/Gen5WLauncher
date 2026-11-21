@@ -14,10 +14,12 @@ public sealed class ActionPresetOption
     public string DefaultIcon { get; }
     public string DefaultTitle { get; }
     public string DefaultSubtitle { get; }
+    public string DefaultSensorKey { get; }
     public bool IsHeader { get; }
 
     public ActionPresetOption(string display, string actionType, string cmd,
-        string defaultIcon, string defaultTitle, string defaultSubtitle, bool isHeader = false)
+        string defaultIcon, string defaultTitle, string defaultSubtitle,
+        string defaultSensorKey = "", bool isHeader = false)
     {
         Display = display;
         ActionType = actionType;
@@ -25,19 +27,20 @@ public sealed class ActionPresetOption
         DefaultIcon = defaultIcon;
         DefaultTitle = defaultTitle;
         DefaultSubtitle = defaultSubtitle;
+        DefaultSensorKey = defaultSensorKey;
         IsHeader = isHeader;
     }
 
     public static ActionPresetOption Category(string title) =>
-        new($"\u2500\u2500\u2500\u2500  {title}  \u2500\u2500\u2500\u2500", "", "", "", "", "", isHeader: true);
+        new($"\u2500\u2500\u2500\u2500  {title}  \u2500\u2500\u2500\u2500", "", "", "", "", "", "", isHeader: true);
 
     public override string ToString() => Display;
 }
 
 public static class PresetCatalog
 {
-    public const string StudioVersion = "0.3.4";
-    public const string DefaultMinAppVersion = "0.3.4";
+    public const string StudioVersion = "0.4.8";
+    public const string DefaultMinAppVersion = "0.4.0";
 
     public static IReadOnlyList<string> ThemeCategories { get; } = new List<string>
     {
@@ -165,23 +168,169 @@ public static class PresetCatalog
         new("Toggle Top System Status Bar", "toggle_bar", "", "icons/home.svg", "Top Bar", "Toggle Fullscreen"),
         new("Cycle Click Sound Effect", "cycle_sound", "", "icons/radio.svg", "Click Audio", "System / Soft / Off"),
         new("Cycle Backdrop Preview Effect", "toggle_bg", "", "icons/home.svg", "Backdrop Fx", "Preview Modes"),
-        new("Jump To Page", "goto_page", "next", "icons/home.svg", "Next Page", "Workspace Switch")
+        new("Jump To Page", "goto_page", "next", "icons/home.svg", "Next Page", "Workspace Switch"),
+
+        ActionPresetOption.Category("LIVE CAR CONTROLS — POPUP CONSOLE & DOORS / LOCKS"),
+        new("Live Car Controls (Popup Console)", "open_car_controls", "", "icons/car.svg", "Car Controls", "AC, Doors, Trunk & Windows"),
+        new("Lock All Doors", "car_cmd", "door_lock", "icons/car.svg", "Lock Doors", "Central Door Lock", "door.lock_state"),
+        new("Unlock All Doors", "car_cmd", "door_unlock", "icons/car.svg", "Unlock Doors", "Central Door Unlock", "door.lock_state"),
+        new("Toggle Door Locks", "car_cmd", "door_lock_toggle", "icons/car.svg", "Locks", "Lock / Unlock Doors", "door.lock_state"),
+        new("Open All Doors (Parked)", "car_cmd", "door_open_all", "icons/car.svg", "Open Doors", "Release Door Latches", "door.any_open"),
+        new("Close All Doors", "car_cmd", "door_close_all", "icons/car.svg", "Close Doors", "Close Power Doors", "door.any_open"),
+
+        ActionPresetOption.Category("LIVE CAR CONTROLS — TRUNK / LIFTGATE & CHARGE PORT"),
+        new("Open Trunk / Liftgate (Park Only)", "car_cmd", "trunk_open", "icons/car.svg", "Open Trunk", "Open Power Liftgate", "trunk.open"),
+        new("Close Trunk / Liftgate (Park Only)", "car_cmd", "trunk_close", "icons/car.svg", "Close Trunk", "Close Power Liftgate", "trunk.open"),
+        new("Toggle Trunk / Liftgate (Park Only)", "car_cmd", "trunk_toggle", "icons/car.svg", "Trunk / Hatch", "Open / Close Liftgate", "trunk.open"),
+        new("Set Trunk Opening Height — Level 1", "car_cmd", "trunk_height_set:1", "icons/car.svg", "Trunk Lv1", "Lowest Liftgate Height", "trunk.open"),
+        new("Set Trunk Opening Height — Level 2", "car_cmd", "trunk_height_set:2", "icons/car.svg", "Trunk Lv2", "Medium-Low Liftgate", "trunk.open"),
+        new("Set Trunk Opening Height — Level 3", "car_cmd", "trunk_height_set:3", "icons/car.svg", "Trunk Lv3", "Medium-High Liftgate", "trunk.open"),
+        new("Set Trunk Opening Height — Full Open", "car_cmd", "trunk_height_set:4", "icons/car.svg", "Trunk Full", "Full Liftgate Height", "trunk.open"),
+        new("Set Trunk Opening Speed — Normal", "car_cmd", "trunk_speed_set:1", "icons/car.svg", "Trunk Normal", "Normal Liftgate Speed", "trunk.open"),
+        new("Set Trunk Opening Speed — Fast", "car_cmd", "trunk_speed_set:2", "icons/car.svg", "Trunk Fast", "Fast Liftgate Speed", "trunk.open"),
+        new("Open Charge Port Door (Park Only)", "car_cmd", "charge_door_open", "icons/ev.svg", "Open Charge", "Open Charge Port in Park", "charge_door.open"),
+        new("Close Charge Port Door (Park Only)", "car_cmd", "charge_door_close", "icons/ev.svg", "Close Charge", "Close Charge Port in Park", "charge_door.open"),
+        new("Toggle Charge Port Door (Park Only)", "car_cmd", "charge_door_toggle", "icons/ev.svg", "Charge Door", "Toggle Charge Flap", "charge_door.open"),
+
+        ActionPresetOption.Category("LIVE CAR CONTROLS — POWER WINDOWS & SUNROOF"),
+        new("Open All Windows (Full Down)", "car_cmd", "window_all_open", "icons/car.svg", "Windows Down", "Roll Down All 4 Windows", "window.fl"),
+        new("Open All Windows 50% (Half)", "car_cmd", "window_all_half", "icons/car.svg", "Windows 50%", "Half-Open All 4 Windows", "window.fl"),
+        new("Vent All Windows (25%)", "car_cmd", "window_all_vent", "icons/car.svg", "Vent Windows", "Crack All 4 Windows", "window.fl"),
+        new("Close All Windows (Full Up)", "car_cmd", "window_all_close", "icons/car.svg", "Windows Up", "Roll Up All 4 Windows", "window.fl"),
+        new("Driver Window Full Down (FL)", "car_cmd", "window_fl_open", "icons/car.svg", "FL Down", "Open Driver Window", "window.fl"),
+        new("Driver Window Full Up (FL)", "car_cmd", "window_fl_close", "icons/car.svg", "FL Up", "Close Driver Window", "window.fl"),
+        new("Passenger Window Full Down (FR)", "car_cmd", "window_fr_open", "icons/car.svg", "FR Down", "Open Front-Right Window", "window.fr"),
+        new("Passenger Window Full Up (FR)", "car_cmd", "window_fr_close", "icons/car.svg", "FR Up", "Close Front-Right Window", "window.fr"),
+        new("Rear-Left Window Full Down (RL)", "car_cmd", "window_rl_open", "icons/car.svg", "RL Down", "Open Rear-Left Window", "window.rl"),
+        new("Rear-Left Window Full Up (RL)", "car_cmd", "window_rl_close", "icons/car.svg", "RL Up", "Close Rear-Left Window", "window.rl"),
+        new("Rear-Right Window Full Down (RR)", "car_cmd", "window_rr_open", "icons/car.svg", "RR Down", "Open Rear-Right Window", "window.rr"),
+        new("Rear-Right Window Full Up (RR)", "car_cmd", "window_rr_close", "icons/car.svg", "RR Up", "Close Rear-Right Window", "window.rr"),
+        new("Open Sunroof", "car_cmd", "sunroof_open", "icons/car.svg", "Roof Open", "Open Sunroof Glass", "sunroof.open"),
+        new("Close Sunroof", "car_cmd", "sunroof_close", "icons/car.svg", "Roof Close", "Close Sunroof Glass", "sunroof.open"),
+        new("Open Sunroof Shade", "car_cmd", "sunshade_open", "icons/car.svg", "Shade Open", "Open Sunroof Blind", "sunroof.open"),
+        new("Close Sunroof Shade", "car_cmd", "sunshade_close", "icons/car.svg", "Shade Close", "Close Sunroof Blind", "sunroof.open"),
+
+        ActionPresetOption.Category("LIVE CAR CONTROLS — CLIMATE POWER, MODES & DEFROST"),
+        new("Climate Power Toggle (On / Off)", "car_cmd", "climate_toggle", "icons/climate.svg", "Climate", "Toggle HVAC Power", "climate.on"),
+        new("Climate Power ON", "car_cmd", "climate_on", "icons/climate.svg", "HVAC ON", "Turn Climate System On", "climate.on"),
+        new("Climate Power OFF", "car_cmd", "climate_off", "icons/climate.svg", "HVAC OFF", "Turn Climate System Off", "climate.on"),
+        new("Climate AUTO Mode Toggle", "car_cmd", "climate_auto_toggle", "icons/climate.svg", "AUTO", "Toggle Auto Climate", "climate.auto"),
+        new("Set Climate AUTO ON", "car_cmd", "climate_auto_on", "icons/climate.svg", "AUTO ON", "Enable Automatic Climate", "climate.auto"),
+        new("Set Climate AUTO OFF", "car_cmd", "climate_auto_off", "icons/climate.svg", "AUTO OFF", "Disable Automatic Climate", "climate.auto"),
+        new("A/C Compressor Toggle", "car_cmd", "climate_ac_toggle", "icons/climate.svg", "A/C", "Toggle Air Conditioning", "climate.ac"),
+        new("Set A/C Compressor ON", "car_cmd", "climate_ac_on", "icons/climate.svg", "A/C ON", "Turn Air Conditioning On", "climate.ac"),
+        new("Set A/C Compressor OFF", "car_cmd", "climate_ac_off", "icons/climate.svg", "A/C OFF", "Turn Air Conditioning Off", "climate.ac"),
+        new("Cabin Heater (HEAT) Toggle", "car_cmd", "climate_heat_toggle", "icons/temp.svg", "HEAT", "Toggle Cabin Heater", "climate.heat"),
+        new("Set Cabin Heater ON", "car_cmd", "climate_heat_on", "icons/temp.svg", "HEAT ON", "Turn Cabin Heater On", "climate.heat"),
+        new("Set Cabin Heater OFF", "car_cmd", "climate_heat_off", "icons/temp.svg", "HEAT OFF", "Turn Cabin Heater Off", "climate.heat"),
+        new("MAX A/C Cool Down", "car_cmd", "climate_max_ac", "icons/climate.svg", "MAX A/C", "LO + Max Fan + A/C + Recirc", "climate.ac"),
+        new("MAX Windshield Defrost", "car_cmd", "climate_max_defrost", "icons/defrost.svg", "MAX Defrost", "Max Defrost + A/C + Fresh Air", "climate.front_defrost"),
+        new("Dual-Zone Temp SYNC Toggle", "car_cmd", "climate_sync_toggle", "icons/temp.svg", "SYNC", "Sync Driver & Pass Temp", "climate.sync"),
+        new("Set Dual-Zone SYNC ON", "car_cmd", "climate_sync_on", "icons/temp.svg", "SYNC ON", "Enable Dual-Zone SYNC", "climate.sync"),
+        new("Set Dual-Zone SYNC OFF", "car_cmd", "climate_sync_off", "icons/temp.svg", "SYNC OFF", "Independent Driver & Pass", "climate.sync"),
+        new("Air Recirculation Toggle", "car_cmd", "climate_recirc_toggle", "icons/fan.svg", "Recirc", "Toggle Cabin Air Intake", "climate.recirc"),
+        new("Set Recirculation ON", "car_cmd", "climate_recirc_on", "icons/fan.svg", "Recirc ON", "Recirculate Cabin Air", "climate.recirc"),
+        new("Set Fresh Outside Air", "car_cmd", "climate_fresh_air", "icons/fan.svg", "Fresh Air", "Draw Outside Fresh Air", "climate.recirc"),
+        new("Driver-Only Climate Toggle", "car_cmd", "climate_driver_only_toggle", "icons/user.svg", "Driver Only", "Toggle Driver-Only HVAC", "climate.driver_only"),
+        new("Set Driver-Only Climate ON", "car_cmd", "climate_driver_only_on", "icons/user.svg", "Drv Only ON", "Enable Driver-Only Airflow", "climate.driver_only"),
+        new("Set Driver-Only Climate OFF", "car_cmd", "climate_driver_only_off", "icons/user.svg", "Drv Only OFF", "All Cabin Zones Active", "climate.driver_only"),
+        new("Front Windshield Defrost Toggle", "car_cmd", "climate_front_defrost_toggle", "icons/defrost.svg", "Front Defrost", "Toggle Front Defroster", "climate.front_defrost"),
+        new("Set Front Defrost ON", "car_cmd", "climate_front_defrost_on", "icons/defrost.svg", "F. Def ON", "Enable Front Defrost", "climate.front_defrost"),
+        new("Set Front Defrost OFF", "car_cmd", "climate_front_defrost_off", "icons/defrost.svg", "F. Def OFF", "Disable Front Defrost", "climate.front_defrost"),
+
+        ActionPresetOption.Category("LIVE CAR CONTROLS — SET AC TEMP, VENTS & FAN SPEED"),
+        new("Cycle Air Vent Mode", "car_cmd", "climate_vent_cycle", "icons/fan.svg", "Vent Mode", "Cycle Face / Floor / Def", "climate.vent_mode"),
+        new("Set Air Vent — Face", "car_cmd", "climate_vent_set:1", "icons/fan.svg", "Vent: Face", "Upper Dash Vents", "climate.vent_mode"),
+        new("Set Air Vent — Bi-Level (Face+Floor)", "car_cmd", "climate_vent_set:2", "icons/fan.svg", "Vent: Bi-Lvl", "Face & Floor Vents", "climate.vent_mode"),
+        new("Set Air Vent — Floor", "car_cmd", "climate_vent_set:3", "icons/fan.svg", "Vent: Floor", "Footwell Vents", "climate.vent_mode"),
+        new("Set Air Vent — Floor + Defrost", "car_cmd", "climate_vent_set:4", "icons/defrost.svg", "Vent: Flr+Def", "Floor & Windshield Vents", "climate.vent_mode"),
+        new("Set Air Vent — Defrost", "car_cmd", "climate_vent_set:5", "icons/defrost.svg", "Vent: Defrost", "Windshield Defrost Vents", "climate.vent_mode"),
+        new("Set AC Temp — LO (Max Cool)", "car_cmd", "climate_set_temp:LO", "icons/temp.svg", "Temp LO", "Set Cabin Temp to LO", "climate.driver_temp"),
+        new("Set AC Temp — 66°F (19°C)", "car_cmd", "climate_set_temp:66", "icons/temp.svg", "Set 66°", "Set Cabin Target to 66°F", "climate.driver_temp"),
+        new("Set AC Temp — 68°F (20°C)", "car_cmd", "climate_set_temp:68", "icons/temp.svg", "Set 68°", "Set Cabin Target to 68°F", "climate.driver_temp"),
+        new("Set AC Temp — 70°F (21°C)", "car_cmd", "climate_set_temp:70", "icons/temp.svg", "Set 70°", "Set Cabin Target to 70°F", "climate.driver_temp"),
+        new("Set AC Temp — 72°F (22°C)", "car_cmd", "climate_set_temp:72", "icons/temp.svg", "Set 72°", "Set Cabin Target to 72°F", "climate.driver_temp"),
+        new("Set AC Temp — 74°F (23°C)", "car_cmd", "climate_set_temp:74", "icons/temp.svg", "Set 74°", "Set Cabin Target to 74°F", "climate.driver_temp"),
+        new("Set AC Temp — 76°F (24°C)", "car_cmd", "climate_set_temp:76", "icons/temp.svg", "Set 76°", "Set Cabin Target to 76°F", "climate.driver_temp"),
+        new("Set AC Temp — HI (Max Heat)", "car_cmd", "climate_set_temp:HI", "icons/temp.svg", "Temp HI", "Set Cabin Temp to HI", "climate.driver_temp"),
+        new("Driver Temp + Step", "car_cmd", "climate_driver_temp_up", "icons/temp.svg", "Driver +", "Raise Driver Target Temp", "climate.driver_temp"),
+        new("Driver Temp - Step", "car_cmd", "climate_driver_temp_down", "icons/temp.svg", "Driver -", "Lower Driver Target Temp", "climate.driver_temp"),
+        new("Passenger Temp + Step", "car_cmd", "climate_passenger_temp_up", "icons/temp.svg", "Pass +", "Raise Passenger Target Temp", "climate.passenger_temp"),
+        new("Passenger Temp - Step", "car_cmd", "climate_passenger_temp_down", "icons/temp.svg", "Pass -", "Lower Passenger Target Temp", "climate.passenger_temp"),
+        new("Climate Fan Speed +", "car_cmd", "climate_fan_up", "icons/fan.svg", "Fan +", "Increase Blower Speed", "climate.fan_speed"),
+        new("Climate Fan Speed -", "car_cmd", "climate_fan_down", "icons/fan.svg", "Fan -", "Decrease Blower Speed", "climate.fan_speed"),
+        new("Set Fan Speed — OFF (0)", "car_cmd", "climate_fan_set:0", "icons/fan.svg", "Fan OFF", "Turn Blower Fan Off", "climate.fan_speed"),
+        new("Set Fan Speed — Level 1", "car_cmd", "climate_fan_set:1", "icons/fan.svg", "Fan Lv1", "Set Blower Level 1", "climate.fan_speed"),
+        new("Set Fan Speed — Level 2", "car_cmd", "climate_fan_set:2", "icons/fan.svg", "Fan Lv2", "Set Blower Level 2", "climate.fan_speed"),
+        new("Set Fan Speed — Level 3", "car_cmd", "climate_fan_set:3", "icons/fan.svg", "Fan Lv3", "Set Blower Level 3", "climate.fan_speed"),
+        new("Set Fan Speed — Level 4", "car_cmd", "climate_fan_set:4", "icons/fan.svg", "Fan Lv4", "Set Blower Level 4", "climate.fan_speed"),
+        new("Set Fan Speed — Level 5", "car_cmd", "climate_fan_set:5", "icons/fan.svg", "Fan Lv5", "Set Blower Level 5", "climate.fan_speed"),
+        new("Set Fan Speed — Level 6", "car_cmd", "climate_fan_set:6", "icons/fan.svg", "Fan Lv6", "Set Blower Level 6", "climate.fan_speed"),
+        new("Set Fan Speed — Level 7", "car_cmd", "climate_fan_set:7", "icons/fan.svg", "Fan Lv7", "Set Blower Level 7", "climate.fan_speed"),
+        new("Set Fan Speed — Level 8 (Max)", "car_cmd", "climate_fan_set:8", "icons/fan.svg", "Fan Max", "Set Blower Level 8", "climate.fan_speed"),
+
+        ActionPresetOption.Category("LIVE CAR CONTROLS — CABIN EXTRAS & REAR HVAC"),
+        new("Smart Ventilation Toggle", "car_cmd", "climate_smart_vent_toggle", "icons/climate.svg", "Smart Vent", "Toggle Smart Ventilation", "climate.smart_vent"),
+        new("Auto Defog Toggle", "car_cmd", "climate_auto_defog_toggle", "icons/defrost.svg", "Auto Defog", "Toggle Auto Windshield Defog", "climate.auto_defog"),
+        new("After-Blow Evaporator Dry Toggle", "car_cmd", "climate_after_blow_toggle", "icons/fan.svg", "After-Blow", "Toggle After-Blow Fan", "climate.after_blow"),
+        new("Air Cleaning Ionizer Toggle", "car_cmd", "climate_air_clean_toggle", "icons/climate.svg", "Air Clean", "Toggle Cabin Air Clean", "climate.air_clean"),
+        new("Rear Climate Power Toggle", "car_cmd", "rear_climate_toggle", "icons/climate.svg", "Rear HVAC", "Toggle Rear Climate Zone", "climate.rear_on"),
+        new("Rear Climate AUTO Toggle", "car_cmd", "rear_climate_auto_toggle", "icons/climate.svg", "Rear AUTO", "Toggle Rear Auto Mode", "climate.rear_on"),
+        new("Rear Climate Lock Toggle", "car_cmd", "rear_climate_lock_toggle", "icons/climate.svg", "Rear Lock", "Lock Rear HVAC Controls", "climate.rear_lock"),
+        new("Rear Climate Temp +", "car_cmd", "rear_climate_temp_up", "icons/temp.svg", "Rear +", "Raise Rear Target Temp", "climate.rear_on"),
+        new("Rear Climate Temp -", "car_cmd", "rear_climate_temp_down", "icons/temp.svg", "Rear -", "Lower Rear Target Temp", "climate.rear_on"),
+        new("Rear Climate Fan +", "car_cmd", "rear_climate_fan_up", "icons/fan.svg", "R. Fan +", "Raise Rear Blower Speed", "climate.rear_on"),
+        new("Rear Climate Fan -", "car_cmd", "rear_climate_fan_down", "icons/fan.svg", "R. Fan -", "Lower Rear Blower Speed", "climate.rear_on"),
+
+        ActionPresetOption.Category("LIVE CAR CONTROLS — SEATS, STEERING WHEEL & AUDIO"),
+        new("Driver Seat Heat (Cycle 0-3)", "car_cmd", "seat_heat_driver_cycle", "icons/seat.svg", "D. Seat Heat", "Cycle High / Med / Low / Off", "seat_heat.driver"),
+        new("Set Driver Seat Heat — Off", "car_cmd", "seat_heat_driver_set:0", "icons/seat.svg", "D. Heat Off", "Turn Driver Seat Heat Off", "seat_heat.driver"),
+        new("Set Driver Seat Heat — High (3)", "car_cmd", "seat_heat_driver_set:3", "icons/seat.svg", "D. Heat Hi", "Driver Seat Heat Level 3", "seat_heat.driver"),
+        new("Passenger Seat Heat (Cycle 0-3)", "car_cmd", "seat_heat_passenger_cycle", "icons/seat.svg", "P. Seat Heat", "Cycle High / Med / Low / Off", "seat_heat.passenger"),
+        new("Set Passenger Seat Heat — Off", "car_cmd", "seat_heat_passenger_set:0", "icons/seat.svg", "P. Heat Off", "Turn Pass Seat Heat Off", "seat_heat.passenger"),
+        new("Set Passenger Seat Heat — High (3)", "car_cmd", "seat_heat_passenger_set:3", "icons/seat.svg", "P. Heat Hi", "Pass Seat Heat Level 3", "seat_heat.passenger"),
+        new("Driver Seat Vent (Cycle 0-3)", "car_cmd", "seat_vent_driver_cycle", "icons/seat.svg", "D. Seat Vent", "Cycle Seat Cooling", "seat_vent.driver"),
+        new("Passenger Seat Vent (Cycle 0-3)", "car_cmd", "seat_vent_passenger_cycle", "icons/seat.svg", "P. Seat Vent", "Cycle Seat Cooling", "seat_vent.passenger"),
+        new("Rear-Left Seat Heat (Cycle 0-3)", "car_cmd", "seat_heat_rl_cycle", "icons/seat.svg", "RL Heat", "Cycle Rear-Left Seat Heat", "seat_heat.rear_left"),
+        new("Rear-Right Seat Heat (Cycle 0-3)", "car_cmd", "seat_heat_rr_cycle", "icons/seat.svg", "RR Heat", "Cycle Rear-Right Seat Heat", "seat_heat.rear_right"),
+        new("Steering Wheel Heater Toggle", "car_cmd", "wheel_heat_toggle", "icons/steering.svg", "Wheel Heat", "Toggle Heated Wheel", "wheel_heat"),
+        new("Rear Window Defogger Toggle", "car_cmd", "rear_defrost_toggle", "icons/defrost.svg", "Rear Defog", "Toggle Rear Defroster", "defogger"),
+        new("Audio Volume +", "car_cmd", "volume_up", "icons/volume.svg", "Vol +", "Increase Active Volume", "audio.volume"),
+        new("Audio Volume -", "car_cmd", "volume_down", "icons/volume.svg", "Vol -", "Decrease Active Volume", "audio.volume"),
+        new("Audio Mute Toggle", "car_cmd", "volume_mute_toggle", "icons/volume.svg", "Mute", "Toggle Media Mute", "audio.muted"),
+        new("HV Battery Preconditioning", "car_cmd", "precondition_toggle", "icons/battery.svg", "Precond", "Start / Stop Battery Heating", "hv.conditioning_active")
     };
 
     public static IReadOnlyList<string> BuiltInIcons { get; } = new List<string>
     {
         "icons/ev.svg",
+        "icons/battery.svg",
         "icons/climate.svg",
-        "icons/projection.svg",
+        "icons/fan.svg",
+        "icons/temp.svg",
+        "icons/defrost.svg",
+        "icons/seat.svg",
+        "icons/steering.svg",
+        "icons/car.svg",
+        "icons/navi.svg",
+        "icons/camera.svg",
         "icons/radio.svg",
         "icons/media.svg",
-        "icons/apps.svg",
-        "icons/navi.svg",
+        "icons/music.svg",
+        "icons/volume.svg",
+        "icons/projection.svg",
+        "icons/bluetooth.svg",
+        "icons/phone.svg",
+        "icons/wifi.svg",
+        "icons/user.svg",
         "icons/settings.svg",
-        "icons/power.svg",
+        "icons/wrench.svg",
+        "icons/shield.svg",
+        "icons/store.svg",
+        "icons/apps.svg",
         "icons/home.svg",
         "icons/stock.svg",
-        "icons/store.svg"
+        "icons/power.svg"
     };
 
     public sealed record TelemetrySensorOption(
@@ -189,51 +338,127 @@ public static class PresetCatalog
         string Display,
         string DefaultUnit,
         double DefaultMin,
-        double DefaultMax)
+        double DefaultMax,
+        bool IsHeader = false)
     {
-        public string DropdownLabel => string.IsNullOrEmpty(Key) ? Display : $"{Key} \u2014 {Display}";
+        public string DropdownLabel => IsHeader || string.IsNullOrEmpty(Key) ? Display : $"{Key} \u2014 {Display}";
         public override string ToString() => Key;
+
+        public static TelemetrySensorOption Category(string title) =>
+            new("", $"\u2500\u2500\u2500\u2500  {title}  \u2500\u2500\u2500\u2500", "", 0, 1, IsHeader: true);
     }
 
     public static IReadOnlyList<TelemetrySensorOption> TelemetrySensors { get; } = new List<TelemetrySensorOption>
     {
         new("", "(None — Static Text / Value)", "", 0, 100),
+
+        TelemetrySensorOption.Category("EV BATTERY, RANGE & CHARGING"),
         new("hv.soc", "HV Battery State of Charge (%)", "%", 0, 100),
-        new("battery12v.soc", "12V Aux Battery State of Charge (%)", "%", 0, 100),
-        new("hv.battery_temp_min", "HV Pack Min Cell Temp (Uses Theme Unit)", "", -20, 60),
-        new("hv.battery_temp_min_c", "HV Pack Min Cell Temp (Always °C)", "°C", -20, 60),
-        new("hv.battery_temp_min_f", "HV Pack Min Cell Temp (Always °F)", "°F", 0, 140),
-        new("hv.health", "HV Battery Health Index", "", 0, 100),
-        new("outside_temp_f", "Outside Ambient Temp (Always °F)", "°F", -20, 120),
-        new("outside_temp", "Outside Ambient Temp (Always °C)", "°C", -30, 50),
-        new("speed", "Vehicle Speed (Uses Theme Unit)", "", 0, 180),
-        new("speed_mph", "Vehicle Speed (Always mph)", "mph", 0, 120),
-        new("speed_kmh", "Vehicle Speed (Always km/h)", "km/h", 0, 180),
-        new("odometer", "Odometer (Uses Theme Unit)", "", 0, 300000),
-        new("odometer_mi", "Odometer (Always mi)", "mi", 0, 200000),
-        new("odometer_km", "Odometer (Always km)", "km", 0, 300000),
-        new("gear_speed", "Gear / Speed Combo (Uses Theme Unit)", "", 0, 180),
-        new("gear.park", "Park Gear Status (PARK / DRIVE)", "", 0, 1),
-        new("parking_brake", "Electronic Parking Brake", "", 0, 1),
+        new("hv.range", "EV Estimated Range (Uses Theme Unit)", "", 0, 350),
+        new("hv.range_mi", "EV Estimated Range (Always mi)", "mi", 0, 350),
+        new("hv.range_km", "EV Estimated Range (Always km)", "km", 0, 550),
         new("charging", "Charging Status (CHARGING / IDLE)", "", 0, 1),
+        new("charging.remain_min", "Charging Time Remaining", "", 0, 600),
+        new("hv.plug_state", "EV Charge Plug Connected (PLUGGED / UNPLUGGED)", "", 0, 2),
+        new("hv.v2l_active", "Vehicle-to-Load V2L Active (ACTIVE / OFF)", "", 0, 1),
         new("hv.ready", "EV Ready Status (READY / STANDBY)", "", 0, 1),
         new("hv.conditioning", "Battery Conditioning Setting", "", 0, 2),
         new("hv.conditioning_active", "Battery Conditioning Active", "", 0, 1),
         new("conditioning.state", "Conditioning Request State", "", 0, 1),
+        new("hv.battery_temp_min", "HV Pack Min Cell Temp (Uses Theme Unit)", "", -20, 60),
+        new("hv.battery_temp_min_c", "HV Pack Min Cell Temp (Always °C)", "°C", -20, 60),
+        new("hv.battery_temp_min_f", "HV Pack Min Cell Temp (Always °F)", "°F", 0, 140),
+        new("hv.health", "HV Battery Health Index", "", 0, 100),
+
+        TelemetrySensorOption.Category("SPEED, DRIVE, GEAR & PEDALS"),
+        new("speed", "Vehicle Speed (Uses Theme Unit)", "", 0, 180),
+        new("speed_mph", "Vehicle Speed (Always mph)", "mph", 0, 120),
+        new("speed_kmh", "Vehicle Speed (Always km/h)", "km/h", 0, 180),
+        new("gear_speed", "Gear / Speed Combo (Uses Theme Unit)", "", 0, 180),
+        new("gear.park", "Park Gear Status (PARK / DRIVE)", "", 0, 1),
+        new("parking_brake", "Electronic Parking Brake", "", 0, 1),
+        new("odometer", "Odometer (Uses Theme Unit)", "", 0, 300000),
+        new("odometer_mi", "Odometer (Always mi)", "mi", 0, 200000),
+        new("odometer_km", "Odometer (Always km)", "km", 0, 300000),
         new("moving", "Vehicle Moving (0/1)", "", 0, 1),
         new("driving.restricted", "Driving Restriction Active", "", 0, 1),
         new("steering.angle", "Steering Wheel Angle (°)", "°", -540, 540),
-        new("pedal.accel", "Accelerator Pedal (raw)", "", 0, 100),
+        new("pedal.accel", "Accelerator Pedal (%)", "%", 0, 100),
         new("brake.pressure", "Brake Cylinder Pressure (raw)", "", 0, 100),
-        new("wheel_heat", "Steering Wheel Heat (ON/OFF)", "", 0, 1),
-        new("defogger", "Rear Defogger (ON/OFF)", "", 0, 1),
+        new("guide_lines", "Rear Camera Dynamic Guidelines (ON / OFF)", "", 0, 1),
+
+        TelemetrySensorOption.Category("CLIMATE & HVAC (TEMPS, FAN & MODES)"),
+        new("outside_temp_f", "Outside Ambient Temp (Always °F)", "°F", -20, 120),
+        new("outside_temp", "Outside Ambient Temp (Always °C)", "°C", -30, 50),
+        new("climate.on", "Climate Power (ON / OFF)", "", 0, 1),
+        new("climate.auto", "Climate AUTO Mode (ON / OFF)", "", 0, 1),
+        new("climate.auto_level", "Climate AUTO Intensity Step (0-3)", "", 0, 3),
+        new("climate.ac", "Climate A/C State (ON / OFF)", "", 0, 1),
+        new("climate.heat", "Cabin Heater HEAT State (ON / OFF)", "", 0, 1),
+        new("climate.temp_unit", "HVAC Display Temp Unit (C / F)", "", 0, 1),
+        new("climate.driver_temp", "Driver Climate Target Temp", "", 60, 90),
+        new("climate.passenger_temp", "Passenger Climate Target Temp", "", 60, 90),
+        new("climate.fan_speed", "Climate Blower Fan Speed (0-8)", "", 0, 8),
+        new("climate.vent_mode", "Climate Air Vent Mode", "", 0, 10),
+        new("climate.recirc", "Air Recirculation (ON / OFF)", "", 0, 1),
+        new("climate.sync", "Dual-Zone Temp SYNC (ON / OFF)", "", 0, 1),
+        new("climate.driver_only", "Climate Driver Only (ON / OFF)", "", 0, 1),
+        new("climate.front_defrost", "Front Windshield Defrost (ON / OFF)", "", 0, 1),
+        new("climate.rear_on", "Rear Climate Zone Power (ON / OFF)", "", 0, 1),
+        new("climate.rear_lock", "Rear Climate Controls Lock (ON / OFF)", "", 0, 1),
+        new("climate.air_clean", "Air Cleaning Ionizer (ON / OFF)", "", 0, 1),
+        new("climate.smart_vent", "Smart Ventilation (ON / OFF)", "", 0, 1),
+        new("climate.auto_defog", "Auto Windshield Defog (ON / OFF)", "", 0, 1),
+        new("climate.after_blow", "After-Blow Evaporator Fan (ON / OFF)", "", 0, 1),
+
+        TelemetrySensorOption.Category("SEATS, STEERING WHEEL & DEFOGGER"),
         new("seat_heat.driver", "Driver Seat Heat (0-3)", "", 0, 3),
         new("seat_heat.passenger", "Passenger Seat Heat (0-3)", "", 0, 3),
         new("seat_heat.rear_left", "Rear Left Seat Heat (0-3)", "", 0, 3),
         new("seat_heat.rear_right", "Rear Right Seat Heat (0-3)", "", 0, 3),
         new("seat_vent.driver", "Driver Seat Vent (0-3)", "", 0, 3),
         new("seat_vent.passenger", "Passenger Seat Vent (0-3)", "", 0, 3),
-        new("battery12v.saver", "Aux 12V Battery Saver Flag", "", 0, 1)
+        new("wheel_heat", "Steering Wheel Heat (ON / OFF)", "", 0, 1),
+        new("defogger", "Rear Defogger (ON / OFF)", "", 0, 1),
+
+        TelemetrySensorOption.Category("DOORS, LOCKS, TRUNK/HATCH & WINDOWS"),
+        new("door.lock_state", "All Doors Lock Status (LOCKED / UNLOCKED)", "", 0, 1),
+        new("door.any_open", "Any Door Open (ALL CLOSED / DOOR OPEN)", "", 0, 1),
+        new("door.fl", "Front-Left Door (CLOSED / OPEN)", "", 0, 1),
+        new("door.fr", "Front-Right Door (CLOSED / OPEN)", "", 0, 1),
+        new("door.rl", "Rear-Left Door (CLOSED / OPEN)", "", 0, 1),
+        new("door.rr", "Rear-Right Door (CLOSED / OPEN)", "", 0, 1),
+        new("door.lock.fl", "Front-Left Door Lock (LOCKED / UNLOCKED)", "", 0, 1),
+        new("door.lock.fr", "Front-Right Door Lock (LOCKED / UNLOCKED)", "", 0, 1),
+        new("door.lock.rl", "Rear-Left Door Lock (LOCKED / UNLOCKED)", "", 0, 1),
+        new("door.lock.rr", "Rear-Right Door Lock (LOCKED / UNLOCKED)", "", 0, 1),
+        new("trunk.open", "Trunk / Liftgate State (CLOSED / OPEN)", "", 0, 1),
+        new("trunk.ptg_state", "Power Tailgate Open Flag (CLOSED / OPEN)", "", 0, 1),
+        new("charge_door.open", "EV Charge Port Door (CLOSED / OPEN)", "", 0, 1),
+        new("hood.open", "Hood / Frunk State (CLOSED / OPEN)", "", 0, 1),
+        new("window.fl", "Front-Left Window (CLOSED / OPEN)", "", 0, 1),
+        new("window.fr", "Front-Right Window (CLOSED / OPEN)", "", 0, 1),
+        new("window.rl", "Rear-Left Window (CLOSED / OPEN)", "", 0, 1),
+        new("window.rr", "Rear-Right Window (CLOSED / OPEN)", "", 0, 1),
+        new("sunroof.open", "Sunroof State (CLOSED / OPEN)", "", 0, 1),
+
+        TelemetrySensorOption.Category("AUDIO, TIRES, 12V & ENERGY DRAW"),
+        new("audio.volume", "Active Audio Volume Level", "", 0, 45),
+        new("audio.muted", "Audio Mute Status (MUTED / ACTIVE)", "", 0, 1),
+        new("battery12v.soc", "12V Aux Battery State of Charge (%)", "%", 0, 100),
+        new("battery12v.saver", "Aux 12V Battery Saver Flag", "", 0, 1),
+        new("tyre.fl_status", "Front-Left Tire Status (OK / LOW)", "", 0, 1),
+        new("tyre.fr_status", "Front-Right Tire Status (OK / LOW)", "", 0, 1),
+        new("tyre.rl_status", "Rear-Left Tire Status (OK / LOW)", "", 0, 1),
+        new("tyre.rr_status", "Rear-Right Tire Status (OK / LOW)", "", 0, 1),
+        new("tyre.fl_psi", "Front-Left Tire Pressure (psi)", "psi", 0, 60),
+        new("tyre.fr_psi", "Front-Right Tire Pressure (psi)", "psi", 0, 60),
+        new("tyre.rl_psi", "Rear-Left Tire Pressure (psi)", "psi", 0, 60),
+        new("tyre.rr_psi", "Rear-Right Tire Pressure (psi)", "psi", 0, 60),
+        new("energy.drivetrain_kw", "Drivetrain Power Draw (kW)", "kW", 0, 250),
+        new("energy.climate_kw", "Climate Power Draw (kW)", "kW", 0, 10),
+        new("energy.electronics_w", "Electronics Load (W)", "W", 0, 1500),
+        new("energy.care_kw", "Battery Care Power Draw (kW)", "kW", 0, 10)
     };
 
     public static TelemetrySensorOption? FindSensorInfo(string? key)
@@ -243,21 +468,28 @@ public static class PresetCatalog
         string mapped = norm switch
         {
             "hv_soc" => "hv.soc",
+            "hv_range" => "hv.range",
             "aux12v_soc" => "battery12v.soc",
             "outside_temp_c" => "outside_temp",
             "hv_ready" => "hv.ready",
             "gear_park" => "gear.park",
             "driving_restricted" => "driving.restricted",
+            "climate_temp_driver" => "climate.driver_temp",
+            "climate_temp_passenger" => "climate.passenger_temp",
+            "climate_fan" => "climate.fan_speed",
+            "volume" => "audio.volume",
             _ => norm
         };
         foreach (var opt in TelemetrySensors)
         {
+            if (opt.IsHeader) continue;
             if (string.Equals(opt.Key, mapped, StringComparison.OrdinalIgnoreCase)) return opt;
         }
         return null;
     }
 
-    public static IReadOnlyList<string> TelemetryKeys { get; } = TelemetrySensors.Select(s => s.Key).ToList();
+    public static IReadOnlyList<string> TelemetryKeys { get; } =
+        TelemetrySensors.Where(s => !s.IsHeader).Select(s => s.Key).ToList();
 
     public static IReadOnlyList<string> FontPresets { get; } = new List<string>
     {
@@ -309,6 +541,7 @@ public static class PresetCatalog
         "float",
         "shimmer",
         "glow",
+        "border_glow",
         "ev_reactive"
     };
 

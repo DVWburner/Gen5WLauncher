@@ -7,9 +7,14 @@ case "$(pm path com.gen5w.launcher 2>/dev/null)" in
         echo "Gen5W Launcher APK is not installed yet; wait a few seconds or apply mods in HMG-API"
         exit 1 ;;
 esac
-am start -a android.intent.action.MAIN -n com.gen5w.launcher/.ThemeManagerActivity >/dev/null 2>&1 || {
-    echo "Failed to launch Gen5W Theme Store"
+out="$(am start -a android.intent.action.MAIN -n com.gen5w.launcher/.ThemeManagerActivity 2>&1)" || {
+    echo "Failed to launch Gen5W Theme Store: $out"
     exit 1
 }
+case "$out" in
+    *Error:*|*Exception*)
+        echo "Failed to launch Gen5W Theme Store: $out"
+        exit 1 ;;
+esac
 echo "Gen5W Theme Store opened"
 exit 0

@@ -9,7 +9,8 @@ import java.util.List;
 
 /**
  * Monitors system properties and running processes via IActivityManager to detect
- * rapid crash loops of com.gen5w.launcher without spurious process forks.
+ * rapid crash loops of com.gen5w.launcher (including instant <150ms onCreate crashes)
+ * using monotonic elapsedRealtimeMs timestamps.
  */
 final class ProcessWatchHelper {
     private static final long CRASH_WINDOW_MS = 60_000L;
@@ -17,9 +18,11 @@ final class ProcessWatchHelper {
 
     private Object am;
     private Method mGetRunningAppProcesses;
+    private Method mGetProcessesInErrorState;
     private Method mPropGet;
 
     private int lastPid = -1;
+    private int lastErrorPid = -1;
     private final Deque<Long> crashTimesMs = new ArrayDeque<Long>();
 
     private synchronized Object ensureAm() throws Exception {
@@ -30,6 +33,10 @@ final class ProcessWatchHelper {
         am = amn.getMethod("getDefault").invoke(null);
         Class<?> iam = Class.forName("android.app.IActivityManager");
         mGetRunningAppProcesses = iam.getMethod("getRunningAppProcesses");
+        try {
+            mGetProcessesInErrorState = iam.getMethod("getProcessesInErrorState");
+        } catch (Throwable ignored) {
+        }
         return am;
     }
 
@@ -68,27 +75,62 @@ final class ProcessWatchHelper {
         return -1;
     }
 
+    @SuppressWarnings("unchecked")
+    private boolean isProcessInErrorState(String processName) {
+        try {
+            Object service = ensureAm();
+            if (mGetProcessesInErrorState == null) {
+                return false;
+            }
+            Object listObj = mGetProcessesInErrorState.invoke(service);
+            if (!(listObj instanceof List)) {
+                return false;
+            }
+            for (Object o : (List<Object>) listObj) {
+                if (o instanceof ActivityManager.ProcessErrorStateInfo) {
+                    ActivityManager.ProcessErrorStateInfo err = (ActivityManager.ProcessErrorStateInfo) o;
+                    if (processName.equals(err.processName)) {
+                        return true;
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
     synchronized void resetWatch() {
         lastPid = findProcessPid("com.gen5w.launcher");
+        lastErrorPid = -1;
         crashTimesMs.clear();
     }
 
     /**
      * Records a sampling tick for com.gen5w.launcher while custom HOME is active.
-     * Returns true if 3+ unexpected exits/restarts occurred within 60 seconds.
+     * Uses monotonic elapsedMs so wall-clock NTP/GPS updates never skew the 60s window.
+     * Note: pid <= 0 while another app (e.g. CarPlay, Navigation, NEMESIS) is in the foreground
+     * is normal Android LMK / lifecycle behavior and must NOT be treated as a crash loop.
      */
-    synchronized boolean sampleAndCheckCrashLoop(long nowMs, boolean customHomeActive) {
-        pruneOld(nowMs);
+    synchronized boolean sampleAndCheckCrashLoop(long elapsedMs, boolean customHomeActive) {
+        pruneOld(elapsedMs);
         int pid = findProcessPid("com.gen5w.launcher");
         if (!customHomeActive) {
             lastPid = pid;
+            lastErrorPid = -1;
             return false;
         }
-        if (lastPid > 0 && pid != lastPid) {
-            // Process exited or restarted into a new PID while active.
-            crashTimesMs.addLast(nowMs);
+        if (pid > 0 && pid != lastErrorPid && isProcessInErrorState("com.gen5w.launcher")) {
+            lastErrorPid = pid;
+            crashTimesMs.addLast(Long.valueOf(elapsedMs));
+            System.out.println("[HomeSwitcher] launcher in error/crash state pid=" + pid
+                    + " (events_60s=" + crashTimesMs.size() + ")");
+        } else if (lastPid > 0 && pid != lastPid) {
+            crashTimesMs.addLast(Long.valueOf(elapsedMs));
             System.out.println("[HomeSwitcher] launcher PID transition detected: "
                     + lastPid + " -> " + pid + " (events_60s=" + crashTimesMs.size() + ")");
+        }
+        if (pid <= 0) {
+            lastErrorPid = -1;
         }
         lastPid = pid;
         return crashTimesMs.size() >= CRASH_THRESHOLD;
@@ -98,14 +140,19 @@ final class ProcessWatchHelper {
         return lastPid;
     }
 
-    synchronized int getCrashCountInWindow(long nowMs) {
-        pruneOld(nowMs);
+    synchronized int getCrashCountInWindow(long elapsedMs) {
+        pruneOld(elapsedMs);
         return crashTimesMs.size();
     }
 
-    private void pruneOld(long nowMs) {
-        while (!crashTimesMs.isEmpty() && (nowMs - crashTimesMs.peekFirst()) > CRASH_WINDOW_MS) {
-            crashTimesMs.removeFirst();
+    private void pruneOld(long elapsedMs) {
+        while (!crashTimesMs.isEmpty()) {
+            long first = crashTimesMs.peekFirst().longValue();
+            if ((elapsedMs - first) > CRASH_WINDOW_MS || elapsedMs < first) {
+                crashTimesMs.removeFirst();
+            } else {
+                break;
+            }
         }
     }
 }

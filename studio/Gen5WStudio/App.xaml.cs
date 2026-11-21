@@ -99,7 +99,7 @@ public partial class App : Application
                     if (File.Exists(testCopy)) File.Delete(testCopy);
                 }
 
-                string summary = $"OK  Gen5WStudio self-test passed (SVGs={PresetCatalog.BuiltInIcons.Count}, sensors={PresetCatalog.TelemetrySensors.Count}, font={fontChecked}, gifFrames={res.FrameCount}, mfFrames={vRes.FrameCount}, mfMethod={vRes.Method}, mfBytes={vRes.TotalBytes})";
+                string summary = $"OK  Gen5WStudio self-test passed (SVGs={PresetCatalog.BuiltInIcons.Count}, sensors={PresetCatalog.TelemetrySensors.Count(s => !s.IsHeader)}, font={fontChecked}, gifFrames={res.FrameCount}, mfFrames={vRes.FrameCount}, mfMethod={vRes.Method}, mfBytes={vRes.TotalBytes})";
                 File.WriteAllText(Path.Combine(Path.GetTempPath(), "gen5w_studio_selftest.log"), summary + Environment.NewLine);
                 Console.WriteLine(summary);
                 return 0;

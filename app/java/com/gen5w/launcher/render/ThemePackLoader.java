@@ -28,7 +28,7 @@ public final class ThemePackLoader {
 
     public static ThemePack load(Context context, String sourceMode) {
         if ("usb".equals(sourceMode)) {
-            ThemePack usbPack = tryLoadUsbPreview();
+            ThemePack usbPack = tryLoadUsbPreview(context);
             if (usbPack != null) {
                 return usbPack;
             }
@@ -50,6 +50,20 @@ public final class ThemePackLoader {
         }
     }
 
+    public static File findUsbPreviewDir(Context context) {
+        if (context != null) {
+            String custom = context.getSharedPreferences(ThemePackManager.PREF_NAME, Context.MODE_PRIVATE)
+                    .getString(ThemePackManager.PREF_USB_PREVIEW_PATH, "");
+            if (custom != null && custom.startsWith("/storage/usb") && !custom.contains("..")) {
+                File customDir = new File(custom);
+                if (customDir.isDirectory() && new File(customDir, "layout.json").isFile()) {
+                    return customDir;
+                }
+            }
+        }
+        return findUsbPreviewDir();
+    }
+
     public static File findUsbPreviewDir() {
         for (String p : USB_PREVIEW_DIRS) {
             File d = new File(p);
@@ -60,8 +74,8 @@ public final class ThemePackLoader {
         return null;
     }
 
-    private static ThemePack tryLoadUsbPreview() {
-        File dir = findUsbPreviewDir();
+    private static ThemePack tryLoadUsbPreview(Context context) {
+        File dir = findUsbPreviewDir(context);
         return dir == null ? null : tryLoadDirectory(dir, "usb:" + dir.getAbsolutePath());
     }
 

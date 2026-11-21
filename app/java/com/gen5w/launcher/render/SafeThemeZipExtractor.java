@@ -90,6 +90,10 @@ public final class SafeThemeZipExtractor {
     private SafeThemeZipExtractor() {}
 
     public static ZipSummary inspectSummary(File zipFile) {
+        return inspectSummary(zipFile, true);
+    }
+
+    public static ZipSummary inspectSummary(File zipFile, boolean includeThumbnail) {
         ZipSummary s = new ZipSummary();
         if (zipFile == null || !zipFile.isFile()) {
             s.error = "ZIP file not found";
@@ -162,7 +166,7 @@ public final class SafeThemeZipExtractor {
                 } catch (Throwable ignored) {
                 }
             }
-            if (thumbEntry != null) {
+            if (includeThumbnail && thumbEntry != null) {
                 try {
                     byte[] tb = readEntryBounded(zf.getInputStream(thumbEntry), 4 * 1024 * 1024);
                     if (hasPngMagic(tb) || hasJpegMagic(tb)) {
@@ -547,12 +551,88 @@ public final class SafeThemeZipExtractor {
                 || "thumbs.db".equals(base) || "desktop.ini".equals(base);
     }
 
+    public static byte[] readZipThumbnailBytes(File zipFile, int maxBytes) {
+        if (zipFile == null || !zipFile.isFile()) {
+            return null;
+        }
+        ZipFile zf = null;
+        try {
+            zf = new ZipFile(zipFile);
+            ZipEntry thumb = zf.getEntry("thumbnail.png");
+            if (thumb == null) {
+                thumb = zf.getEntry("thumbnail.jpg");
+            }
+            if (thumb == null) {
+                Enumeration<? extends ZipEntry> en = zf.entries();
+                while (en.hasMoreElements()) {
+                    ZipEntry e = en.nextElement();
+                    String n = normalizeEntryName(e.getName());
+                    if ("thumbnail.png".equalsIgnoreCase(n) || "thumbnail.jpg".equalsIgnoreCase(n)) {
+                        thumb = e;
+                        break;
+                    }
+                }
+            }
+            if (thumb != null) {
+                byte[] tb = readEntryBounded(zf.getInputStream(thumb), maxBytes > 0 ? maxBytes : (4 * 1024 * 1024));
+                if (hasPngMagic(tb) || hasJpegMagic(tb)) {
+                    return tb;
+                }
+            }
+        } catch (Throwable ignored) {
+        } finally {
+            if (zf != null) {
+                try { zf.close(); } catch (IOException ignored) {}
+            }
+        }
+        return null;
+    }
+
+    public static void validateFolderFileAllowed(String relPath, InputStream contentStream, long fileLen) throws Exception {
+        String norm = normalizeEntryName(relPath);
+        if (isUnsafePath(norm)) {
+            throw new SecurityException("Blocked unsafe path: " + norm);
+        }
+        validatePathAllowed(norm);
+        if (fileLen <= 0L) {
+            throw new SecurityException(norm + " is empty.");
+        }
+        if (fileLen > MAX_SINGLE_FILE_BYTES) {
+            throw new SecurityException(norm + " exceeds 25 MB per-file safety cap.");
+        }
+        if (isTextVerifiedEntry(norm)) {
+            byte[] bytes = readEntryBounded(contentStream, MAX_TEXT_ENTRY_BYTES);
+            validateTextOrSvgEntry(norm, bytes);
+        } else {
+            byte[] hdr = new byte[16];
+            int total = 0;
+            try {
+                while (total < hdr.length) {
+                    int n = contentStream.read(hdr, total, hdr.length - total);
+                    if (n <= 0) break;
+                    total += n;
+                }
+            } finally {
+                try { contentStream.close(); } catch (IOException ignored) {}
+            }
+            byte[] checkHdr = total < hdr.length ? Arrays.copyOf(hdr, total) : hdr;
+            if (hasBlockedBinarySignature(checkHdr)) {
+                throw new SecurityException(norm + " contains blocked executable/archive signature.");
+            }
+            verifyExpectedFileMagic(norm, checkHdr);
+        }
+    }
+
+    public static boolean shouldSkipJunkFile(String relPath) {
+        return shouldIgnoreOsJunk(normalizeEntryName(relPath));
+    }
+
     private static void rejectSymlinksFromCentralDirectory(File zipFile) throws IOException {
         RandomAccessFile raf = new RandomAccessFile(zipFile, "r");
         try {
             long len = raf.length();
             if (len < 22L) {
-                return;
+                throw new SecurityException("Invalid or truncated ZIP archive.");
             }
             int searchLen = (int) Math.min(len, 65557L);
             long startOff = len - searchLen;
@@ -571,13 +651,16 @@ public final class SafeThemeZipExtractor {
                 }
             }
             if (eocdIdx < 0) {
-                return;
+                throw new SecurityException("Invalid ZIP archive: missing central directory footer.");
             }
             int cdEntries = u16le(tail, eocdIdx + 10);
             long cdSize = u32le(tail, eocdIdx + 12);
             long cdOffset = u32le(tail, eocdIdx + 16);
-            if (cdOffset == 0xFFFFFFFFL || cdSize == 0xFFFFFFFFL || cdSize > 32L * 1024L * 1024L || cdOffset + cdSize > len) {
-                return;
+            if (cdOffset == 0xFFFFFFFFL || cdSize == 0xFFFFFFFFL || cdEntries == 0xFFFF) {
+                throw new SecurityException("ZIP64 archives are not supported for theme bundles.");
+            }
+            if (cdSize > 32L * 1024L * 1024L || cdOffset + cdSize > len) {
+                throw new SecurityException("Corrupted ZIP central directory bounds.");
             }
             byte[] cd = new byte[(int) cdSize];
             raf.seek(cdOffset);
@@ -586,7 +669,7 @@ public final class SafeThemeZipExtractor {
             int pos = 0;
             for (int i = 0; i < cdEntries && pos + 46 <= cd.length; i++) {
                 if (cd[pos] != 0x50 || cd[pos + 1] != 0x4B || cd[pos + 2] != 0x01 || cd[pos + 3] != 0x02) {
-                    break;
+                    throw new SecurityException("Corrupted ZIP central directory entry header.");
                 }
                 int nameLen = u16le(cd, pos + 28);
                 int extraLen = u16le(cd, pos + 30);

@@ -1,0 +1,97 @@
+<Window x:Class="Gen5WStudio.AiContextDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="AI Theme Builder Context — Copy &amp; Paste into Any AI Agent"
+        Width="980" Height="740" MinWidth="720" MinHeight="520"
+        WindowStartupLocation="CenterOwner"
+        Background="#FF080E1A"
+        Foreground="#FFF1F5F9">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <DockPanel Grid.Row="0" Margin="0,0,0,10">
+            <StackPanel DockPanel.Dock="Left">
+                <TextBlock Text="AI THEME AUTHORING CONTEXT (AUTO-GENERATED FROM STUDIO CATALOG)"
+                           FontSize="15" FontWeight="Bold" Foreground="#FF38BDF8" />
+                <TextBlock x:Name="SubtitleText"
+                           Text="Copy and paste this specification into Claude, ChatGPT, Gemini, Cursor, or Antigravity so it can build valid Gen5W Studio &amp; headunit themes."
+                           FontSize="12" Foreground="#FF94A3B8" Margin="0,3,0,0" TextWrapping="Wrap" />
+            </StackPanel>
+        </DockPanel>
+
+        <Border Grid.Row="1" Background="#FF0F192B" BorderBrush="#FF243752" BorderThickness="1" CornerRadius="6" Padding="10,8" Margin="0,0,0,10">
+            <DockPanel LastChildFill="False">
+                <CheckBox x:Name="IncludeActiveThemeCheck"
+                          DockPanel.Dock="Left"
+                          Content="Append currently open theme's layout.json (for remixing / editing an existing theme)"
+                          Foreground="#FFE2E8F0"
+                          VerticalAlignment="Center"
+                          Checked="OnOptionsChanged"
+                          Unchecked="OnOptionsChanged" />
+                <TextBlock x:Name="StatsLabel"
+                           DockPanel.Dock="Right"
+                           Foreground="#FF7DD3FC"
+                           FontSize="11.5"
+                           FontWeight="SemiBold"
+                           VerticalAlignment="Center" />
+            </DockPanel>
+        </Border>
+
+        <Border Grid.Row="2" Background="#FF060A12" BorderBrush="#FF243752" BorderThickness="1" CornerRadius="6">
+            <TextBox x:Name="PromptBox"
+                     IsReadOnly="True"
+                     AcceptsReturn="True"
+                     TextWrapping="NoWrap"
+                     VerticalScrollBarVisibility="Auto"
+                     HorizontalScrollBarVisibility="Auto"
+                     FontFamily="Consolas, Courier New"
+                     FontSize="12"
+                     Background="Transparent"
+                     Foreground="#FFE2E8F0"
+                     BorderThickness="0"
+                     Padding="12" />
+        </Border>
+
+        <DockPanel Grid.Row="3" Margin="0,12,0,0" LastChildFill="False">
+            <TextBlock x:Name="CopyStatusText"
+                       DockPanel.Dock="Left"
+                       Foreground="#FF34D399"
+                       FontWeight="SemiBold"
+                       VerticalAlignment="Center" />
+
+            <Button DockPanel.Dock="Right"
+                    Content="Close"
+                    Width="92"
+                    Padding="10,6"
+                    Background="#FF1E293B"
+                    BorderBrush="#FF475569"
+                    Foreground="#FFF1F5F9"
+                    Margin="8,0,0,0"
+                    Click="OnCloseClick" />
+
+            <Button DockPanel.Dock="Right"
+                    Content="Save as .md..."
+                    Padding="12,6"
+                    Background="#FF1B2C44"
+                    BorderBrush="#FF334E73"
+                    Foreground="#FFF1F5F9"
+                    Margin="8,0,0,0"
+                    Click="OnSaveMarkdownClick" />
+
+            <Button x:Name="CopyBtn"
+                    DockPanel.Dock="Right"
+                    Content="Copy AI Context to Clipboard"
+                    Padding="16,6"
+                    FontWeight="Bold"
+                    Background="#FF065F46"
+                    BorderBrush="#FF10B981"
+                    Foreground="#FFFFFFFF"
+                    Click="OnCopyClick" />
+        </DockPanel>
+    </Grid>
+</Window>

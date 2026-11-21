@@ -6,7 +6,7 @@
       "type": "toggle",
       "default": true,
       "title": "Auto-activate confirmed custom HOME on cold boot",
-      "description": "After you confirm Gen5W Home via the 45-second test inside the app, this allows home-switcher to switch default HOME after the 10-second safe boot window. Turn this off to stay on stock Home while keeping the mod installed."
+      "description": "Keeps Gen5W Home active as your default launcher across reboots and updates after you select Gen5W Home in Android's Home picker (or confirm inside the app). Turn this off to stay on stock Home while keeping the mod installed."
     },
     {
       "key": "custom_hold_home",

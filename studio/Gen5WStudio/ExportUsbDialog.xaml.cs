@@ -279,7 +279,9 @@ public partial class ExportUsbDialog : Window
         }
         try
         {
-            var added = workspace.ImportThemeFolderIntoCurrentPack(dlg.FolderName);
+            if (activePack != null && workspace.HasActiveTheme)
+                workspace.SaveCurrentTheme(activePack);
+            var added = workspace.StageThemeFolderIntoCurrentPack(dlg.FolderName);
             PackWorkspaceChanged = true;
             ReloadRows();
             IncludeThemesCheck.IsChecked = true;
@@ -306,8 +308,10 @@ public partial class ExportUsbDialog : Window
         }
         try
         {
+            if (activePack != null && workspace.HasActiveTheme)
+                workspace.SaveCurrentTheme(activePack);
             byte[] zipBytes = File.ReadAllBytes(dlg.FileName);
-            var added = workspace.ImportSingleThemeZipIntoCurrentPack(zipBytes);
+            var added = workspace.StageSingleThemeZipIntoCurrentPack(zipBytes);
             PackWorkspaceChanged = true;
             ReloadRows();
             IncludeThemesCheck.IsChecked = true;

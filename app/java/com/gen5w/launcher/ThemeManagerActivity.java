@@ -69,7 +69,7 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
     private SafeClickSoundPlayer soundPlayer;
     private StoreThumbnailLoader thumbnailLoader;
     private Drawable defaultPackIcon;
-    private String currentAppVersion = "0.3.5";
+    private String currentAppVersion = "0.4.8";
 
     private FrameLayout rootFrame;
     private TextView activeSummaryView;
@@ -113,9 +113,13 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
     private TextView detailCancelBtn;
     private volatile boolean downloadInFlight = false;
     private volatile boolean downloadCancelRequested = false;
+    private volatile int activeDownloadSeq = 0;
+    private volatile boolean usbImportInFlight = false;
+    private int installedReloadSeq = 0;
 
     private SwitcherOverlayDialog switcherDialog;
     private StockButtonsOverlay stockButtonsOverlay;
+    private ThemedSettingsLabOverlay themedSettingsLab;
     private SwitcherClient.Status latestSwitcherStatus = new SwitcherClient.Status();
 
     private String activeTab = TAB_INSTALLED;
@@ -142,8 +146,8 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
         requestWindowFeature(Window.FEATURE_NO_TITLE);
+        super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
 
         soundPlayer = new SafeClickSoundPlayer(this);
@@ -218,7 +222,9 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
     @Override
     protected void onDestroy() {
         downloadCancelRequested = true;
-        mainHandler.removeCallbacks(switcherTicker);
+        activeDownloadSeq++;
+        mainHandler.removeCallbacksAndMessages(null);
+        telemetry.setListener(null);
         telemetry.stop();
         soundPlayer.release();
         thumbnailLoader.shutdown();
@@ -227,6 +233,10 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
 
     @Override
     public void onBackPressed() {
+        if (themedSettingsLab != null && themedSettingsLab.getVisibility() == View.VISIBLE) {
+            themedSettingsLab.setVisibility(View.GONE);
+            return;
+        }
         if (stockButtonsOverlay != null && stockButtonsOverlay.getVisibility() == View.VISIBLE) {
             stockButtonsOverlay.setVisibility(View.GONE);
             return;
@@ -310,7 +320,7 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
         bar.addView(tabs, tabsLp);
 
         // Utility buttons
-        TextView failsafeBtn = makeHeaderBtn("Failsafe", 0xFF132840, 0xFF38BDF8);
+        TextView failsafeBtn = makeHeaderBtn("Default Home / Failsafe", 0xFF132840, 0xFF38BDF8);
         failsafeBtn.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -418,17 +428,39 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
     }
 
     private void reloadInstalledPacks() {
-        ThemePack activePack = ThemePackLoader.load(
-                this,
-                getSharedPreferences(ThemePackManager.PREF_NAME, MODE_PRIVATE)
-                        .getString(ThemePackLoader.PACK_PREF_SOURCE, "auto"));
-        activeSummaryView.setText("Active: " + activePack.name + "  (" + activePack.sourceLabel + ")");
+        final int seq = ++installedReloadSeq;
+        final Context appCtx = getApplicationContext();
+        Thread t = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                final ThemePack activePack = ThemePackLoader.load(
+                        appCtx,
+                        appCtx.getSharedPreferences(ThemePackManager.PREF_NAME, MODE_PRIVATE)
+                                .getString(ThemePackLoader.PACK_PREF_SOURCE, "auto"));
+                final long freeMb = ThemePackManager.getAvailableInternalBytes(appCtx) / (1024L * 1024L);
+                final List<ThemePackManager.PackEntry> packs = ThemePackManager.discoverAllPacks(appCtx);
+                mainHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (seq != installedReloadSeq || isFinishing() || isDestroyed()) {
+                            return;
+                        }
+                        activeSummaryView.setText("Active: " + activePack.name + "  (" + activePack.sourceLabel + ")");
+                        freeSpaceView.setText("Unit Free: " + freeMb + " MB");
+                        if (themedSettingsLab != null) {
+                            themedSettingsLab.updateActiveThemePack(activePack);
+                        }
+                        renderInstalledPackCards(packs);
+                    }
+                });
+            }
+        }, "theme-packs-scan");
+        t.setDaemon(true);
+        t.start();
+    }
 
-        long freeMb = ThemePackManager.getAvailableInternalBytes(this) / (1024L * 1024L);
-        freeSpaceView.setText("Unit Free: " + freeMb + " MB");
-
+    private void renderInstalledPackCards(List<ThemePackManager.PackEntry> packs) {
         installedGridHost.removeAllViews();
-        List<ThemePackManager.PackEntry> packs = ThemePackManager.discoverAllPacks(this);
 
         int cols = getResources().getDisplayMetrics().widthPixels >= 1200 ? 3 : 2;
         LinearLayout row = null;
@@ -475,12 +507,12 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
         LinearLayout.LayoutParams pfp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 152);
         pfp.bottomMargin = 10;
 
-        if (entry.thumbnailFile != null || (entry.zipThumbnailBytes != null && entry.zipThumbnailBytes.length > 0)) {
+        if (entry.thumbnailFile != null || entry.zipFile != null || (entry.zipThumbnailBytes != null && entry.zipThumbnailBytes.length > 0)) {
             ImageView iv = new ImageView(this);
             iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
             previewFrame.addView(iv, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-            thumbnailLoader.loadLocalThumbnail(iv, entry.thumbnailFile, entry.zipThumbnailBytes, 520, 195);
+            thumbnailLoader.loadLocalThumbnail(iv, entry.thumbnailFile, entry.zipFile, entry.zipThumbnailBytes, 520, 195);
         } else {
             LinearLayout placeholder = new LinearLayout(this);
             placeholder.setOrientation(LinearLayout.VERTICAL);
@@ -595,9 +627,9 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
                 @Override
                 public void onClick(View v) {
                     soundPlayer.playClick(v);
-                    ThemePackManager.setActivePack(ThemeManagerActivity.this, ThemePackManager.BUNDLED_ID, "usb");
+                    ThemePackManager.setActiveUsbPreviewDir(ThemeManagerActivity.this, entry.dir);
                     reloadInstalledPacks();
-                    Toast.makeText(ThemeManagerActivity.this, "Live USB preview active", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(ThemeManagerActivity.this, "Live USB preview active: " + entry.name, Toast.LENGTH_SHORT).show();
                 }
             });
             addRowBtn(btnRow, prevBtn, 0);
@@ -665,15 +697,22 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
     }
 
     private void importUsbDirAsync(final ThemePackManager.PackEntry entry) {
+        if (usbImportInFlight) {
+            return;
+        }
+        usbImportInFlight = true;
         Toast.makeText(this, "Importing " + entry.name + "...", Toast.LENGTH_SHORT).show();
+        final Context appCtx = getApplicationContext();
         Thread t = new Thread(new Runnable() {
             @Override
             public void run() {
                 try {
-                    ThemePackManager.importFromUsbAndActivate(ThemeManagerActivity.this, entry.dir);
+                    ThemePackManager.importFromUsbAndActivate(appCtx, entry.dir);
                     mainHandler.post(new Runnable() {
                         @Override
                         public void run() {
+                            usbImportInFlight = false;
+                            if (isFinishing() || isDestroyed()) return;
                             Toast.makeText(ThemeManagerActivity.this, "Imported & activated " + entry.name, Toast.LENGTH_SHORT).show();
                             reloadInstalledPacks();
                         }
@@ -682,6 +721,8 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
                     mainHandler.post(new Runnable() {
                         @Override
                         public void run() {
+                            usbImportInFlight = false;
+                            if (isFinishing() || isDestroyed()) return;
                             Toast.makeText(ThemeManagerActivity.this, "USB import failed: " + ex.getMessage(), Toast.LENGTH_LONG).show();
                         }
                     });
@@ -693,15 +734,22 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
     }
 
     private void importUsbZipAsync(final ThemePackManager.PackEntry entry) {
+        if (usbImportInFlight) {
+            return;
+        }
+        usbImportInFlight = true;
         Toast.makeText(this, "Verifying & extracting " + entry.name + "...", Toast.LENGTH_SHORT).show();
+        final Context appCtx = getApplicationContext();
         Thread t = new Thread(new Runnable() {
             @Override
             public void run() {
                 try {
-                    ThemePackManager.importFromUsbZipAndActivate(ThemeManagerActivity.this, entry.zipFile);
+                    ThemePackManager.importFromUsbZipAndActivate(appCtx, entry.zipFile);
                     mainHandler.post(new Runnable() {
                         @Override
                         public void run() {
+                            usbImportInFlight = false;
+                            if (isFinishing() || isDestroyed()) return;
                             Toast.makeText(ThemeManagerActivity.this, "Imported & activated " + entry.name, Toast.LENGTH_SHORT).show();
                             reloadInstalledPacks();
                         }
@@ -710,6 +758,8 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
                     mainHandler.post(new Runnable() {
                         @Override
                         public void run() {
+                            usbImportInFlight = false;
+                            if (isFinishing() || isDestroyed()) return;
                             Toast.makeText(ThemeManagerActivity.this, "USB ZIP blocked: " + ex.getMessage(), Toast.LENGTH_LONG).show();
                         }
                     });
@@ -838,6 +888,36 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
         bar.addView(refreshBtn);
         storeRoot.addView(bar, barLp);
 
+        // Creator callout banner pointing users to market.ioniqthemes.com
+        LinearLayout creatorBar = new LinearLayout(this);
+        creatorBar.setOrientation(LinearLayout.HORIZONTAL);
+        creatorBar.setGravity(Gravity.CENTER_VERTICAL);
+        creatorBar.setPadding(14, 8, 14, 8);
+        creatorBar.setBackground(makeBox(0xCC081E26, 0x5510B981, 12f, 1));
+        LinearLayout.LayoutParams cbLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        cbLp.bottomMargin = 10;
+
+        TextView creatorBadge = new TextView(this);
+        creatorBadge.setText("MAKE YOUR OWN THEMES");
+        creatorBadge.setTextColor(0xFF34D399);
+        creatorBadge.setTypeface(Typeface.DEFAULT_BOLD);
+        creatorBadge.setTextSize(TypedValue.COMPLEX_UNIT_PX, 12f);
+        creatorBadge.setPadding(10, 4, 10, 4);
+        creatorBadge.setBackground(makeBox(0xFF064E3B, 0x6610B981, 8f, 1));
+        LinearLayout.LayoutParams badgeLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        badgeLp.rightMargin = 12;
+        creatorBar.addView(creatorBadge, badgeLp);
+
+        TextView creatorNote = new TextView(this);
+        creatorNote.setText("Visit market.ioniqthemes.com on your computer to build & share your own custom themes with Gen5W Studio.");
+        creatorNote.setTextColor(0xFFE2E8F0);
+        creatorNote.setTextSize(TypedValue.COMPLEX_UNIT_PX, 15f);
+        creatorBar.addView(creatorNote, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        storeRoot.addView(creatorBar, cbLp);
+
         storeStatusBanner = new LinearLayout(this);
         storeStatusBanner.setOrientation(LinearLayout.VERTICAL);
         storeStatusBanner.setGravity(Gravity.CENTER);
@@ -901,7 +981,7 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
                 mainHandler.post(new Runnable() {
                     @Override
                     public void run() {
-                        if (seq != catalogRequestSeq) {
+                        if (seq != catalogRequestSeq || isFinishing() || isDestroyed()) {
                             return;
                         }
                         storeLoading = false;
@@ -1334,6 +1414,7 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
             thumbnailLoader.loadLocalThumbnail(
                     fullImg,
                     detailLocalEntry.thumbnailFile,
+                    detailLocalEntry.zipFile,
                     detailLocalEntry.zipThumbnailBytes,
                     960,
                     360);
@@ -1591,6 +1672,8 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
         }
         downloadInFlight = true;
         downloadCancelRequested = false;
+        final int dlSeq = ++activeDownloadSeq;
+        final Context appCtx = getApplicationContext();
 
         setDetailDownloadButtonsEnabled(false);
         detailProgressArea.setVisibility(View.VISIBLE);
@@ -1601,11 +1684,11 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
         Thread t = new Thread(new Runnable() {
             @Override
             public void run() {
-                File dlDir = new File(getCacheDir(), "store_downloads");
+                File dlDir = new File(appCtx.getCacheDir(), "store_downloads");
                 if (!dlDir.exists()) dlDir.mkdirs();
-                File stagedZip = new File(dlDir, ThemePackManager.sanitizeId(listing.id) + "_dl.zip");
+                File stagedZip = new File(dlDir, ThemePackManager.sanitizeId(listing.id) + "_" + dlSeq + "_dl.zip");
                 try {
-                    ThemePackManager.ensureSpaceForDownload(ThemeManagerActivity.this, listing.fileSizeBytes);
+                    ThemePackManager.ensureSpaceForDownload(appCtx, listing.fileSizeBytes);
                     storeClient.downloadPackageStreamed(
                             listing.downloadUrl,
                             stagedZip,
@@ -1623,7 +1706,7 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
                                     mainHandler.post(new Runnable() {
                                         @Override
                                         public void run() {
-                                            if (detailProgressArea == null) return;
+                                            if (dlSeq != activeDownloadSeq || detailProgressArea == null || isFinishing() || isDestroyed()) return;
                                             long knownTotal = totalBytes > 0L ? totalBytes : listing.fileSizeBytes;
                                             if (knownTotal > 0L) {
                                                 detailProgressBar.setIndeterminate(false);
@@ -1645,13 +1728,14 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
                             new ThemeStoreClient.CancelFlag() {
                                 @Override
                                 public boolean isCancelled() {
-                                    return downloadCancelRequested;
+                                    return downloadCancelRequested || dlSeq != activeDownloadSeq;
                                 }
                             });
 
                     mainHandler.post(new Runnable() {
                         @Override
                         public void run() {
+                            if (dlSeq != activeDownloadSeq || isFinishing() || isDestroyed()) return;
                             if (detailProgressArea != null) {
                                 detailProgressBar.setIndeterminate(true);
                                 detailProgressText.setText("Verifying archive & installing theme...");
@@ -1661,7 +1745,7 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
                     });
 
                     final ThemePackManager.PackEntry installed = ThemePackManager.installDownloadedZip(
-                            ThemeManagerActivity.this,
+                            appCtx,
                             stagedZip,
                             listing,
                             activateNow);
@@ -1669,7 +1753,13 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
                     mainHandler.post(new Runnable() {
                         @Override
                         public void run() {
+                            if (dlSeq != activeDownloadSeq) {
+                                return;
+                            }
                             downloadInFlight = false;
+                            if (isFinishing() || isDestroyed()) {
+                                return;
+                            }
                             if (detailProgressArea != null) {
                                 detailProgressArea.setVisibility(View.GONE);
                             }
@@ -1680,7 +1770,8 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
                                     ThemeManagerActivity.this,
                                     (activateNow ? "Installed & activated " : "Installed ") + installed.name,
                                     Toast.LENGTH_SHORT).show();
-                            if (detailModal != null && detailModal.getVisibility() == View.VISIBLE) {
+                            if (detailModal != null && detailModal.getVisibility() == View.VISIBLE
+                                    && detailStoreListing == listing) {
                                 openStoreDetailModal(listing);
                             }
                         }
@@ -1689,7 +1780,13 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
                     mainHandler.post(new Runnable() {
                         @Override
                         public void run() {
+                            if (dlSeq != activeDownloadSeq) {
+                                return;
+                            }
                             downloadInFlight = false;
+                            if (isFinishing() || isDestroyed()) {
+                                return;
+                            }
                             setDetailDownloadButtonsEnabled(true);
                             if (detailProgressArea != null) {
                                 detailProgressArea.setVisibility(View.GONE);
@@ -1724,6 +1821,8 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
     private void closeDetailModal() {
         if (downloadInFlight) {
             downloadCancelRequested = true;
+            activeDownloadSeq++;
+            downloadInFlight = false;
         }
         if (detailModal != null) {
             detailModal.setVisibility(View.GONE);
@@ -1824,6 +1923,14 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
                         stockButtonsOverlay.setVisibility(View.GONE);
                     }
                 }
+
+                @Override
+                public void onOpenThemedSettingsLabRequested() {
+                    if (stockButtonsOverlay != null) {
+                        stockButtonsOverlay.setVisibility(View.GONE);
+                    }
+                    openThemedSettingsLabOverlay();
+                }
             });
             rootFrame.addView(stockButtonsOverlay, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -1832,6 +1939,27 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
         }
         stockButtonsOverlay.setVisibility(View.VISIBLE);
         stockButtonsOverlay.bringToFront();
+    }
+
+    private void openThemedSettingsLabOverlay() {
+        if (themedSettingsLab == null) {
+            themedSettingsLab = new ThemedSettingsLabOverlay(this, soundPlayer, new ThemedSettingsLabOverlay.Listener() {
+                @Override
+                public void onCloseRequested() {
+                    if (themedSettingsLab != null) {
+                        themedSettingsLab.setVisibility(View.GONE);
+                    }
+                }
+            });
+            rootFrame.addView(themedSettingsLab, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        }
+        String srcMode = getSharedPreferences(ThemePackManager.PREF_NAME, MODE_PRIVATE)
+                .getString(ThemePackLoader.PACK_PREF_SOURCE, "auto");
+        themedSettingsLab.updateActiveThemePack(ThemePackLoader.load(this, srcMode));
+        themedSettingsLab.reload();
+        themedSettingsLab.setVisibility(View.VISIBLE);
+        themedSettingsLab.bringToFront();
     }
 
     private void openGen5WHome() {
@@ -1870,7 +1998,7 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
             }
         } catch (Throwable ignored) {
         }
-        return "0.3.5";
+        return "0.4.8";
     }
 
     private static ThemePackManager.PackEntry findMatch(

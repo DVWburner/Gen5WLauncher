@@ -204,11 +204,17 @@ public final class StockMenuCatalog {
             return;
         }
         if ("int".equals(extraType)) {
-            i.putExtra(extraKey, Integer.parseInt(extraVal));
+            if (extraVal == null || extraVal.trim().isEmpty()) {
+                return;
+            }
+            try {
+                i.putExtra(extraKey, Integer.decode(extraVal.trim()).intValue());
+            } catch (NumberFormatException ignored) {
+            }
         } else if ("bool".equals(extraType)) {
             i.putExtra(extraKey, "true".equalsIgnoreCase(extraVal));
         } else if ("str".equals(extraType)) {
-            i.putExtra(extraKey, extraVal);
+            i.putExtra(extraKey, extraVal == null ? "" : extraVal);
         }
     }
 

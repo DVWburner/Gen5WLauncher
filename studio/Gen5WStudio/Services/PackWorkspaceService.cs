@@ -158,12 +158,20 @@ public sealed class PackWorkspaceService
     }
 
     public ThemeLibraryEntry ImportSingleThemeZipIntoCurrentPack(byte[] zipBytes, string? expectedSha256 = null)
+        => ImportSingleThemeZipInternal(zipBytes, expectedSha256, switchActiveWorkspace: true);
+
+    public ThemeLibraryEntry StageSingleThemeZipIntoCurrentPack(byte[] zipBytes, string? expectedSha256 = null)
+        => ImportSingleThemeZipInternal(zipBytes, expectedSha256, switchActiveWorkspace: false);
+
+    private ThemeLibraryEntry ImportSingleThemeZipInternal(byte[] zipBytes, string? expectedSha256, bool switchActiveWorkspace)
     {
         string tempDir = Path.Combine(Path.GetTempPath(), "gen5w_zip_" + Guid.NewGuid().ToString("N")[..10]);
         try
         {
             ThemePackageService.ExtractSingleThemeZipSafely(zipBytes, tempDir, expectedSha256);
-            return ImportThemeFolderIntoCurrentPack(tempDir);
+            return switchActiveWorkspace
+                ? ImportThemeFolderIntoCurrentPack(tempDir)
+                : StageThemeFolderIntoCurrentPack(tempDir);
         }
         finally
         {
@@ -236,15 +244,56 @@ public sealed class PackWorkspaceService
     }
 
     public ThemeLibraryEntry ImportThemeFolderIntoCurrentPack(string srcThemeDir)
+        => ImportThemeFolderInternal(srcThemeDir, switchActiveWorkspace: true);
+
+    /// <summary>
+    /// Stages another theme into the current pack WITHOUT switching <see cref="WorkspaceDir"/> away
+    /// from the editor's currently open theme (preventing SaveCurrentTheme from overwriting the import).
+    /// </summary>
+    public ThemeLibraryEntry StageThemeFolderIntoCurrentPack(string srcThemeDir)
+        => ImportThemeFolderInternal(srcThemeDir, switchActiveWorkspace: false);
+
+    private ThemeLibraryEntry ImportThemeFolderInternal(string srcThemeDir, bool switchActiveWorkspace)
     {
         var parsed = ThemePackModel.FromJson(File.ReadAllText(Path.Combine(srcThemeDir, "layout.json")));
-        if (!HasActivePack || IsSingleThemeMode)
+        if (!HasActivePack)
         {
             CreateNewCleanPackWithTheme(parsed);
             CopyDirectory(srcThemeDir, WorkspaceDir, overwrite: true);
             SeedDefaultIconsIfMissing(WorkspaceDir);
             File.WriteAllText(Path.Combine(WorkspaceDir, "layout.json"), parsed.ToJsonString(), new System.Text.UTF8Encoding(false));
             return new ThemeLibraryEntry(parsed.Id, parsed.Name, WorkspaceDir, IsBuiltInStarter: false);
+        }
+
+        if (IsSingleThemeMode)
+        {
+            if (switchActiveWorkspace)
+            {
+                CreateNewCleanPackWithTheme(parsed);
+                CopyDirectory(srcThemeDir, WorkspaceDir, overwrite: true);
+                SeedDefaultIconsIfMissing(WorkspaceDir);
+                File.WriteAllText(Path.Combine(WorkspaceDir, "layout.json"), parsed.ToJsonString(), new System.Text.UTF8Encoding(false));
+                return new ThemeLibraryEntry(parsed.Id, parsed.Name, WorkspaceDir, IsBuiltInStarter: false);
+            }
+
+            // Promote single-theme workspace into a multi-theme pack container while keeping WorkspaceDir on the active theme.
+            string prevSingleDir = WorkspaceDir;
+            var existingEntry = TryReadThemeEntry(prevSingleDir, isBuiltIn: false);
+            string basePackSlug = SanitizeId(existingEntry?.Id ?? Path.GetFileName(prevSingleDir.TrimEnd('\\', '/')));
+            string packName = basePackSlug;
+            int pIdx = 2;
+            while (Directory.Exists(Path.Combine(PacksRootDir, packName)))
+            {
+                packName = $"{basePackSlug}-{pIdx++}";
+            }
+            string packContainer = Path.Combine(PacksRootDir, packName, "packs");
+            string migratedActiveDir = Path.Combine(packContainer, basePackSlug);
+            Directory.CreateDirectory(migratedActiveDir);
+            CopyDirectory(prevSingleDir, migratedActiveDir, overwrite: true);
+            ActivePackDir = packContainer;
+            IsSingleThemeMode = false;
+            ExternalLinkedDir = Path.Combine(PacksRootDir, packName);
+            WorkspaceDir = migratedActiveDir;
         }
 
         string safeId = SanitizeId(string.IsNullOrWhiteSpace(parsed.Id) ? Path.GetFileName(srcThemeDir) : parsed.Id);
@@ -259,8 +308,11 @@ public sealed class PackWorkspaceService
         SeedDefaultIconsIfMissing(dst);
         parsed.Id = safeId;
         File.WriteAllText(Path.Combine(dst, "layout.json"), parsed.ToJsonString(), new System.Text.UTF8Encoding(false));
-        WorkspaceDir = dst;
-        fontCache.Clear();
+        if (switchActiveWorkspace)
+        {
+            WorkspaceDir = dst;
+            fontCache.Clear();
+        }
         return new ThemeLibraryEntry(parsed.Id, parsed.Name, dst, IsBuiltInStarter: false);
     }
 
@@ -521,11 +573,23 @@ public sealed class PackWorkspaceService
             {
                 try
                 {
-                    var gt = new GlyphTypeface(new Uri(full));
+                    // Stage a content-addressed copy in %TEMP% before passing to WPF GlyphTypeface/FontFamily
+                    // so WPF's unmanaged font cache never holds a file lock on the workspace's fonts/*.ttf!
+                    byte[] fontBytes = File.ReadAllBytes(full);
+                    string ext = Path.GetExtension(full).ToLowerInvariant();
+                    string hash = ThemePackageService.ComputeSha256Hex(fontBytes)[..16];
+                    string tempFontDir = Path.Combine(Path.GetTempPath(), "Gen5WStudioFontCache", hash);
+                    Directory.CreateDirectory(tempFontDir);
+                    string cachedFontPath = Path.Combine(tempFontDir, Path.GetFileName(full));
+                    if (!File.Exists(cachedFontPath))
+                    {
+                        File.WriteAllBytes(cachedFontPath, fontBytes);
+                    }
+                    var gt = new GlyphTypeface(new Uri(cachedFontPath));
                     string? famName = gt.Win32FamilyNames.Values.FirstOrDefault() ?? gt.FamilyNames.Values.FirstOrDefault();
-                    string dirUri = new Uri(Path.GetDirectoryName(full)!.TrimEnd('\\') + "\\").AbsoluteUri;
+                    string dirUri = new Uri(tempFontDir.TrimEnd('\\') + "\\").AbsoluteUri;
                     resolved = string.IsNullOrWhiteSpace(famName)
-                        ? new FontFamily(full)
+                        ? new FontFamily(cachedFontPath)
                         : new FontFamily(new Uri(dirUri), "./#" + famName);
                 }
                 catch

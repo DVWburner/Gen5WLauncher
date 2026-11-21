@@ -19,10 +19,12 @@ import android.graphics.RectF;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
+import android.util.LruCache;
 import android.widget.Toast;
 
 import com.gen5w.launcher.ipc.SwitcherClient;
 import com.gen5w.launcher.model.ActionSpec;
+import com.gen5w.launcher.render.AssetResolver;
 import com.gen5w.launcher.render.MiniSvgDrawable;
 
 import org.json.JSONArray;
@@ -35,9 +37,11 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Resolves and launches OEM automotive apps and side-loaded Android apps cleanly.
@@ -48,7 +52,10 @@ public final class AppLauncher {
             Uri.parse("content://com.hkmc.system.app.homesetting.provider/all_menu");
 
     public static final class AppEntry {
+        public final String entryKey;
         public final String label;
+        public final String defaultLabel;
+        public final String customLabel;
         public final String subtitle;
         public final String packageName;
         public final String className;
@@ -57,29 +64,58 @@ public final class AppLauncher {
         public final boolean isHmgApi;
         public final String badgeText;
         public final StockMenuCatalog.StockItem stockItem;
+        public final String iconOverride;
+        public final String resolvedSvgPath;
+        public final boolean hidden;
+        public final List<String> nameSuggestions;
 
-        AppEntry(String label, String subtitle, String packageName, String className,
-                Drawable icon, boolean isOemPreset, boolean isHmgApi, String badgeText,
-                StockMenuCatalog.StockItem stockItem) {
-            this.label = label;
+        AppEntry(
+                String entryKey,
+                String label,
+                String defaultLabel,
+                String customLabel,
+                String subtitle,
+                String packageName,
+                String className,
+                Drawable icon,
+                boolean isOemPreset,
+                boolean isHmgApi,
+                String badgeText,
+                StockMenuCatalog.StockItem stockItem,
+                String iconOverride,
+                String resolvedSvgPath,
+                boolean hidden,
+                List<String> nameSuggestions) {
+            this.entryKey = entryKey == null ? "" : entryKey;
+            this.label = label == null ? "" : label;
+            this.defaultLabel = defaultLabel == null ? this.label : defaultLabel;
+            this.customLabel = customLabel == null ? "" : customLabel;
             this.subtitle = subtitle == null ? packageName : subtitle;
-            this.packageName = packageName;
+            this.packageName = packageName == null ? "" : packageName;
             this.className = className == null ? "" : className;
             this.icon = icon;
             this.isOemPreset = isOemPreset;
             this.isHmgApi = isHmgApi;
             this.badgeText = badgeText == null ? "" : badgeText;
             this.stockItem = stockItem;
+            this.iconOverride = iconOverride == null ? "" : iconOverride;
+            this.resolvedSvgPath = resolvedSvgPath == null ? "" : resolvedSvgPath;
+            this.hidden = hidden;
+            this.nameSuggestions = nameSuggestions == null
+                    ? Collections.<String>emptyList()
+                    : Collections.unmodifiableList(new ArrayList<String>(nameSuggestions));
         }
     }
 
     public static final class DrawerSections {
         public final List<AppEntry> stockAndHmgApi;
         public final List<AppEntry> allApps;
+        public final int hiddenCount;
 
-        DrawerSections(List<AppEntry> stockAndHmgApi, List<AppEntry> allApps) {
+        DrawerSections(List<AppEntry> stockAndHmgApi, List<AppEntry> allApps, int hiddenCount) {
             this.stockAndHmgApi = stockAndHmgApi;
             this.allApps = allApps;
+            this.hiddenCount = hiddenCount;
         }
     }
 
@@ -122,6 +158,9 @@ public final class AppLauncher {
         if ("launch_projection".equals(action.type)) {
             return launchProjection(context, action);
         }
+        if ("car_cmd".equals(action.type)) {
+            return sendCarCommand(context, action.cmd, action.extraVal);
+        }
         return launchComponentOrPackage(
                 context,
                 action.pkg,
@@ -142,7 +181,7 @@ public final class AppLauncher {
     }
 
     public static boolean launchPreset(final Context context, String presetKey) {
-        if ("ev".equalsIgnoreCase(presetKey)) {
+        if ("ev".equalsIgnoreCase(presetKey) || "energy_info".equalsIgnoreCase(presetKey)) {
             return launchFirstInstalledCandidate(context, "EV / Hybrid Info", new String[][] {
                     { "com.hkmc.daudio.app.ev3", "com.hkmc.daudio.app.ev3.MainActivity" },
                     { "com.hkmc.daudio.app.ev", "com.hkmc.daudio.app.ev.IgnCheckActivity" },
@@ -182,11 +221,11 @@ public final class AppLauncher {
             return launchStockHome(context);
         }
         if ("radio".equalsIgnoreCase(presetKey) || "sxm".equalsIgnoreCase(presetKey)) {
-            if (tryStartComponent(context, "com.hkmc.av.app.radiona", "com.hkmc.av.app.radiona.RadioMainActivity")
-                    || tryStartComponent(context, "com.hkmc.av.app.radiodrm", "com.hkmc.av.app.radiodrm.RadioMainActivity")
-                    || tryStartComponent(context, "com.hkmc.av.app.radioge", "com.hkmc.av.app.radioge.RadioMainActivity")) {
-                return true;
-            }
+            return launchFirstInstalledCandidate(context, "Radio", new String[][] {
+                    { "com.hkmc.av.app.radiona", "com.hkmc.av.app.radiona.RadioMainActivity" },
+                    { "com.hkmc.av.app.radiodrm", "com.hkmc.av.app.radiodrm.RadioMainActivity" },
+                    { "com.hkmc.av.app.radioge", "com.hkmc.av.app.radioge.RadioMainActivity" }
+            });
         }
         if ("bluelink_settings".equalsIgnoreCase(presetKey)) {
             return launchFirstInstalledCandidate(context, "Connected Services Settings", new String[][] {
@@ -223,6 +262,13 @@ public final class AppLauncher {
         if ("nemesis".equalsIgnoreCase(presetKey)) {
             return launchNemesisEntry(context);
         }
+        if ("car_controls_popup".equalsIgnoreCase(presetKey)) {
+            Toast.makeText(context, "Open Live Car Controls from the Home launcher", Toast.LENGTH_SHORT).show();
+            return false;
+        }
+        if (presetKey != null && presetKey.toLowerCase(Locale.US).startsWith("car_cmd:")) {
+            return sendCarCommand(context, presetKey.substring("car_cmd:".length()), "");
+        }
 
         StockMenuCatalog.StockItem item = StockMenuCatalog.findPresetItem(presetKey);
         if (item == null) {
@@ -230,6 +276,21 @@ public final class AppLauncher {
             return false;
         }
         return launchStockItem(context, item);
+    }
+
+    private static boolean sendCarCommand(final Context context, final String cmd, final String arg) {
+        if (cmd == null || cmd.trim().isEmpty()) {
+            return false;
+        }
+        SwitcherClient.sendCarCommandAsync(cmd.trim(), arg == null ? "" : arg, new SwitcherClient.SimpleCallback() {
+            @Override
+            public void onResult(boolean ok, String message) {
+                if (!ok && message != null && !message.isEmpty()) {
+                    Toast.makeText(context, message, Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
+        return true;
     }
 
     public static boolean launchStockItem(final Context context, final StockMenuCatalog.StockItem item) {
@@ -525,7 +586,7 @@ public final class AppLauncher {
     }
 
     public static List<AppEntry> loadAllApps(Context context) {
-        DrawerSections sec = loadDrawerSections(context, null);
+        DrawerSections sec = loadDrawerSections(context, null, false);
         List<AppEntry> merged = new ArrayList<AppEntry>(sec.stockAndHmgApi.size() + sec.allApps.size());
         merged.addAll(sec.stockAndHmgApi);
         merged.addAll(sec.allApps);
@@ -533,7 +594,17 @@ public final class AppLauncher {
     }
 
     public static DrawerSections loadDrawerSections(Context context, List<SwitcherClient.ModLauncherItem> modEntries) {
+        return loadDrawerSections(context, modEntries, false);
+    }
+
+    public static DrawerSections loadDrawerSections(
+            Context context,
+            List<SwitcherClient.ModLauncherItem> modEntries,
+            boolean includeHidden) {
         PackageManager pm = context.getPackageManager();
+        Map<String, AppCatalogOverrides.OverrideEntry> overrides = AppCatalogOverrides.loadOverrides(context);
+        boolean preferSvg = AppCatalogOverrides.isPreferSvgIcons(context);
+
         List<StockMenuCatalog.StockItem> stockCatalog = StockMenuCatalog.buildAll();
         Map<String, StockMenuCatalog.StockItem> stockByComponent = new LinkedHashMap<String, StockMenuCatalog.StockItem>();
         Map<String, StockMenuCatalog.StockItem> stockById = new LinkedHashMap<String, StockMenuCatalog.StockItem>();
@@ -558,67 +629,67 @@ public final class AppLauncher {
         Map<String, AppEntry> stockMap = new LinkedHashMap<String, AppEntry>();
 
         // 1a. Read saved stock Launcher menu order if HomeSetting provider allows access on this unit
-        readSavedStockHomeMenu(context, pm, stockByComponent, modByComp, stockMap);
+        readSavedStockHomeMenu(context, pm, stockByComponent, modByComp, stockMap, overrides, preferSvg);
 
         // 1b. Curated Stock Launcher (Launcher_WP3) menu entries verified installed on this car
         addFirstAvailableStockItem(context, pm, stockMap, modByComp, stockById, "EV & Energy",
-                new String[] { "ev3_main", "ev1_ign", "hev_ign", "phev_ign" });
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("navi_app"), "Navigation");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("map_app"), "Map");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("climate_smart"), "Climate");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("seat_front_ctrl"), "Seats & Steering");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("seat_rear_ctrl"), "Rear Seats");
+                new String[] { "ev3_main", "ev1_ign", "hev_ign", "phev_ign" }, overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("navi_app"), "Navigation", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("map_app"), "Map", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("climate_smart"), "Climate", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("seat_front_ctrl"), "Seats & Steering", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("seat_rear_ctrl"), "Rear Seats", overrides, preferSvg);
         if (StockMenuCatalog.isPackageInstalled(pm, "com.hkmc.telematics.service.apps.climate")) {
-            addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("climate_rear_req"), "Rear Climate");
+            addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("climate_rear_req"), "Rear Climate", overrides, preferSvg);
         }
         addFirstAvailableStockItem(context, pm, stockMap, modByComp, stockById, "Radio / SiriusXM",
-                new String[] { "radio_na", "radio_drm", "radio_ge" });
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("media_gate"), "Media");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("bt_audio"), "Bluetooth Audio");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("usb_music"), "USB Music");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("usb_video"), "USB Video");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("nature_sound"), "Sounds of Nature");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("bt_dial"), "Bluetooth Phone");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("carplay_dipo"), "Apple CarPlay");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("android_auto"), "Android Auto");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("phone_proj_conn"), "Phone Projection");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("voice_memo"), "Voice Memo");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("drvm"), "Rear Camera");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("quiet_mode"), "Quiet Mode");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("passenger_talk"), "Passenger Talk");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("bluelink"), "BlueLink / Connect");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("driving_info"), "Driving Info");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("valet_mode"), "Valet Mode");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("notifications"), "Notifications");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("hd_data"), "HD Radio Data");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("doppler_radar"), "Weather Radar");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("soundhound"), "SoundHound");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("smart_pure_air"), "Smart Pure Air");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("n_mode"), "N Mode");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("dvrs_act"), "Dashcam (DVRS)");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("iot_act"), "Car to Home (IoT)");
+                new String[] { "radio_na", "radio_drm", "radio_ge" }, overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("media_gate"), "Media", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("bt_audio"), "Bluetooth Audio", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("usb_music"), "USB Music", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("usb_video"), "USB Video", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("nature_sound"), "Sounds of Nature", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("bt_dial"), "Bluetooth Phone", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("carplay_dipo"), "Apple CarPlay", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("android_auto"), "Android Auto", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("phone_proj_conn"), "Phone Projection", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("voice_memo"), "Voice Memo", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("drvm"), "Rear Camera", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("quiet_mode"), "Quiet Mode", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("passenger_talk"), "Passenger Talk", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("bluelink"), "BlueLink / Connect", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("driving_info"), "Driving Info", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("valet_mode"), "Valet Mode", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("notifications"), "Notifications", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("hd_data"), "HD Radio Data", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("doppler_radar"), "Weather Radar", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("soundhound"), "SoundHound", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("smart_pure_air"), "Smart Pure Air", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("n_mode"), "N Mode", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("dvrs_act"), "Dashcam (DVRS)", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("iot_act"), "Car to Home (IoT)", overrides, preferSvg);
         if (StockMenuCatalog.isPackageInstalled(pm, "com.mnsoft.navi")) {
-            addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("carpay"), "CarPay");
+            addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("carpay"), "CarPay", overrides, preferSvg);
         }
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("veh_settings"), "Vehicle Settings");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("seat_arrangement"), "Seat Memory");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("sound_settings"), "Sound Settings");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("display_settings"), "Display Settings");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("general_settings"), "General Settings");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("bt_settings"), "Bluetooth Settings");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("wifi_settings"), "Wi-Fi Settings");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("button_settings"), "Button Settings");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("user_profile"), "User Profile");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("theme_settings"), "Screen Themes");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("my_menu"), "My Menu");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("manual_tip"), "Web Manual");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("setup_settings"), "Setup");
-        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("edit_stock_home"), "Edit Stock Home");
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("veh_settings"), "Vehicle Settings", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("seat_arrangement"), "Seat Memory", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("sound_settings"), "Sound Settings", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("display_settings"), "Display Settings", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("general_settings"), "General Settings", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("bt_settings"), "Bluetooth Settings", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("wifi_settings"), "Wi-Fi Settings", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("button_settings"), "Button Settings", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("user_profile"), "User Profile", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("theme_settings"), "Screen Themes", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("my_menu"), "My Menu", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("manual_tip"), "Web Manual", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("setup_settings"), "Setup", overrides, preferSvg);
+        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockById.get("edit_stock_home"), "Edit Stock Home", overrides, preferSvg);
 
         // 1c. HMG-API Manager & every custom mod launcher entry injected via provides.launcher
-        addHmgApiManagerIfInstalled(context, pm, stockMap);
+        addHmgApiManagerIfInstalled(context, pm, stockMap, overrides, preferSvg);
         for (SwitcherClient.ModLauncherItem m : modByComp.values()) {
-            addModEntryToStockSection(context, pm, stockMap, m);
+            addModEntryToStockSection(context, pm, stockMap, m, overrides, preferSvg);
         }
 
         // --- SECTION 2: More Complete All Installed Apps (multi-activity OEM + system + 3rd party) ---
@@ -672,13 +743,13 @@ public final class AppLauncher {
                 }
                 byte[] customBytes = (mod != null && mod.iconBytes != null && mod.iconBytes.length > 0) ? mod.iconBytes : null;
                 boolean isSpecialMod = mod != null || isTopEcosystemEntry(label, pkg, cls, "");
-                Drawable icon = loadCleanIcon(context, pm, pkg, cls, rawIcon, customBytes, label, knownStock, isSpecialMod);
-                String sub = cleanSubtitle(label, pkg, mod != null ? mod.modId : "", knownStock, isSpecialMod);
-                AppEntry entry = new AppEntry(label, sub, pkg, cls, icon, knownStock != null, isSpecialMod,
-                        isSpecialMod ? "HMG-API" : "", knownStock);
+                AppEntry entry = createConfiguredEntry(
+                        context, pm, key, label, pkg, cls, rawIcon, customBytes,
+                        knownStock, knownStock != null, isSpecialMod,
+                        isSpecialMod ? "HMG-API" : "", overrides, preferSvg);
                 allMap.put(key, entry);
                 // Promote NEMESIS / HMG-API / Gen5W Themes discovered via CATEGORY_LAUNCHER into top section too
-                if (isSpecialMod && !stockMap.containsKey(key)) {
+                if (entry.isHmgApi && !stockMap.containsKey(key)) {
                     stockMap.put(key, entry);
                 }
             }
@@ -691,10 +762,10 @@ public final class AppLauncher {
             if (!isComponentPresent(pm, m.packageName, m.className)) continue;
             String label = !m.title.isEmpty() ? m.title : loadActivityLabel(pm, m.packageName, m.className, m.modId);
             String fullCls = normalizeClassName(m.packageName, m.className);
-            Drawable icon = loadCleanIcon(context, pm, m.packageName, fullCls, null, m.iconBytes, label, null, true);
-            String sub = cleanSubtitle(label, m.packageName, m.modId, null, true);
-            allMap.put(key, new AppEntry(label, sub, m.packageName, fullCls,
-                    icon, false, true, "HMG-API", null));
+            AppEntry entry = createConfiguredEntry(
+                    context, pm, key, label, m.packageName, fullCls, null, m.iconBytes,
+                    null, false, true, "HMG-API", overrides, preferSvg);
+            allMap.put(key, entry);
         }
         for (StockMenuCatalog.StockItem item : stockCatalog) {
             if (item.mode == StockMenuCatalog.Mode.BROADCAST || item.pkg.isEmpty() || item.cls.isEmpty()) continue;
@@ -704,13 +775,26 @@ public final class AppLauncher {
             if (!item.isTargetAvailable(pm)) continue;
             String label = stripArrowDetails(item.title);
             boolean isSpecial = isTopEcosystemEntry(label, item.pkg, fullCls, "");
-            Drawable icon = loadCleanIcon(context, pm, item.pkg, fullCls, null, null, label, item, isSpecial);
-            String sub = cleanSubtitle(label, item.pkg, "", item, isSpecial);
-            allMap.put(key, new AppEntry(label, sub, item.pkg, fullCls, icon, true, isSpecial,
-                    isSpecial ? "HMG-API" : "", item));
+            AppEntry entry = createConfiguredEntry(
+                    context, pm, key, label, item.pkg, fullCls, null, null,
+                    item, true, isSpecial, isSpecial ? "HMG-API" : "", overrides, preferSvg);
+            allMap.put(key, entry);
         }
 
-        List<AppEntry> stockList = new ArrayList<AppEntry>(stockMap.values());
+        Set<String> hiddenKeys = new LinkedHashSet<String>();
+        for (AppEntry e : stockMap.values()) {
+            if (e.hidden) hiddenKeys.add(e.entryKey);
+        }
+        for (AppEntry e : allMap.values()) {
+            if (e.hidden) hiddenKeys.add(e.entryKey);
+        }
+
+        List<AppEntry> stockList = new ArrayList<AppEntry>();
+        for (AppEntry e : stockMap.values()) {
+            if (includeHidden || !e.hidden) {
+                stockList.add(e);
+            }
+        }
         // Float NEMESIS, HMG-API, Gen5W Themes & mods to the very top of Section 1 while preserving curated order for the rest
         final Map<AppEntry, Integer> stockOrigIdx = new HashMap<AppEntry, Integer>();
         for (int i = 0; i < stockList.size(); i++) {
@@ -729,7 +813,12 @@ public final class AppLauncher {
             }
         });
 
-        List<AppEntry> allList = new ArrayList<AppEntry>(allMap.values());
+        List<AppEntry> allList = new ArrayList<AppEntry>();
+        for (AppEntry e : allMap.values()) {
+            if (includeHidden || !e.hidden) {
+                allList.add(e);
+            }
+        }
         Collections.sort(allList, new Comparator<AppEntry>() {
             @Override
             public int compare(AppEntry a, AppEntry b) {
@@ -739,7 +828,62 @@ public final class AppLauncher {
                 return a.label.compareToIgnoreCase(b.label);
             }
         });
-        return new DrawerSections(stockList, allList);
+        return new DrawerSections(stockList, allList, hiddenKeys.size());
+    }
+
+    private static AppEntry createConfiguredEntry(
+            Context ctx,
+            PackageManager pm,
+            String entryKey,
+            String rawLabel,
+            String pkg,
+            String fullCls,
+            Drawable preloadedIcon,
+            byte[] modIconBytes,
+            StockMenuCatalog.StockItem stockItem,
+            boolean isOemPreset,
+            boolean isModEntry,
+            String badgeText,
+            Map<String, AppCatalogOverrides.OverrideEntry> overrides,
+            boolean preferSvg) {
+        String stockId = stockItem != null ? stockItem.id : "";
+        AppCatalogOverrides.CuratedMeta meta = AppCatalogOverrides.resolveMeta(entryKey, pkg, fullCls, stockId);
+
+        String defaultLabel;
+        if (isModEntry && rawLabel != null && !rawLabel.trim().isEmpty() && !looksLikePackageName(rawLabel)) {
+            defaultLabel = rawLabel.trim();
+        } else if (meta != null && !meta.primaryName.isEmpty()) {
+            defaultLabel = meta.primaryName;
+        } else if (rawLabel != null && !rawLabel.trim().isEmpty()) {
+            defaultLabel = cleanDisplayLabel(rawLabel, pkg, fullCls, stockItem);
+        } else {
+            defaultLabel = cleanDisplayLabel("", pkg, fullCls, stockItem);
+        }
+
+        AppCatalogOverrides.OverrideEntry ov = overrides != null ? overrides.get(entryKey) : null;
+        String customLabel = ov != null ? ov.customLabel : "";
+        String finalLabel = !customLabel.isEmpty() ? customLabel : defaultLabel;
+        boolean isTop = isModEntry || isTopEcosystemEntry(finalLabel, pkg, fullCls, "");
+        String finalBadge = isTop ? "HMG-API" : (badgeText == null ? "" : badgeText);
+        boolean hidden = (ov != null && ov.hasHiddenOverride) ? ov.hidden : (meta != null && meta.defaultHidden);
+
+        String iconOverride = ov != null ? ov.iconOverride : "";
+        String autoSvg = (meta != null && !meta.svgPath.isEmpty())
+                ? meta.svgPath
+                : pickFallbackSvgPath(finalLabel, pkg, fullCls, stockItem, isTop);
+        String[] resolvedSvgOut = new String[1];
+        Drawable icon = resolveAppIcon(
+                ctx, pm, pkg, fullCls, preloadedIcon, modIconBytes,
+                finalLabel, stockItem, isTop, preferSvg, iconOverride, autoSvg, resolvedSvgOut);
+
+        String sub = (meta != null && !meta.category.isEmpty() && !isTop)
+                ? meta.category
+                : cleanSubtitle(finalLabel, pkg, isModEntry ? "mod" : "", stockItem, isTop);
+        List<String> suggestions = AppCatalogOverrides.buildSuggestionsForEntry(defaultLabel, pkg, fullCls, meta);
+        return new AppEntry(
+                entryKey, finalLabel, defaultLabel, customLabel, sub, pkg, fullCls,
+                icon, isOemPreset, isTop, finalBadge, stockItem,
+                iconOverride, resolvedSvgOut[0], hidden, suggestions);
     }
 
     private static void readSavedStockHomeMenu(
@@ -747,7 +891,9 @@ public final class AppLauncher {
             PackageManager pm,
             Map<String, StockMenuCatalog.StockItem> stockByComponent,
             Map<String, SwitcherClient.ModLauncherItem> modByComp,
-            Map<String, AppEntry> stockMap) {
+            Map<String, AppEntry> stockMap,
+            Map<String, AppCatalogOverrides.OverrideEntry> overrides,
+            boolean preferSvg) {
         Cursor cur = null;
         try {
             cur = context.getContentResolver().query(STOCK_ALL_MENU_URI, null, null, null, null);
@@ -772,20 +918,19 @@ public final class AppLauncher {
 
                     SwitcherClient.ModLauncherItem mod = modByComp.get(key);
                     if (mod != null) {
-                        addModEntryToStockSection(context, pm, stockMap, mod);
+                        addModEntryToStockSection(context, pm, stockMap, mod, overrides, preferSvg);
                         continue;
                     }
                     StockMenuCatalog.StockItem stockItem = stockByComponent.get(key);
                     if (stockItem != null) {
-                        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockItem, stockItem.title);
+                        addStockItemIfAvailable(context, pm, stockMap, modByComp, stockItem, stockItem.title, overrides, preferSvg);
                         continue;
                     }
                     if (!isComponentPresent(pm, pkg, fullCls)) continue;
                     String label = cleanDisplayLabel(loadActivityLabel(pm, pkg, fullCls, shortClassName(fullCls)), pkg, fullCls, null);
-                    boolean isHmg = isTopEcosystemEntry(label, pkg, fullCls, "");
-                    Drawable icon = loadCleanIcon(context, pm, pkg, fullCls, null, null, label, null, isHmg);
-                    String sub = cleanSubtitle(label, pkg, "", null, isHmg);
-                    stockMap.put(key, new AppEntry(label, sub, pkg, fullCls, icon, !isHmg, isHmg, isHmg ? "HMG-API" : "STOCK", null));
+                    stockMap.put(key, createConfiguredEntry(
+                            context, pm, key, label, pkg, fullCls, null, null,
+                            null, true, false, "STOCK", overrides, preferSvg));
                 }
                 if (!stockMap.isEmpty()) {
                     break; // Use the active/first valid profile row
@@ -806,11 +951,13 @@ public final class AppLauncher {
             Map<String, SwitcherClient.ModLauncherItem> modByComp,
             Map<String, StockMenuCatalog.StockItem> stockById,
             String overrideLabel,
-            String[] candidateIds) {
+            String[] candidateIds,
+            Map<String, AppCatalogOverrides.OverrideEntry> overrides,
+            boolean preferSvg) {
         for (String id : candidateIds) {
             StockMenuCatalog.StockItem item = stockById.get(id);
             if (item != null && item.isTargetAvailable(pm)) {
-                addStockItemIfAvailable(context, pm, out, modByComp, item, overrideLabel);
+                addStockItemIfAvailable(context, pm, out, modByComp, item, overrideLabel, overrides, preferSvg);
                 return;
             }
         }
@@ -822,7 +969,9 @@ public final class AppLauncher {
             Map<String, AppEntry> out,
             Map<String, SwitcherClient.ModLauncherItem> modByComp,
             StockMenuCatalog.StockItem item,
-            String friendlyLabel) {
+            String friendlyLabel,
+            Map<String, AppCatalogOverrides.OverrideEntry> overrides,
+            boolean preferSvg) {
         if (item == null || !item.isTargetAvailable(pm)) return;
         String key = item.mode == StockMenuCatalog.Mode.BROADCAST
                 ? ("bcast:" + item.id)
@@ -833,35 +982,41 @@ public final class AppLauncher {
         }
         String label = (friendlyLabel != null && !friendlyLabel.isEmpty()) ? friendlyLabel : stripArrowDetails(item.title);
         String fullCls = normalizeClassName(item.pkg, item.cls);
-        boolean isHmg = isTopEcosystemEntry(label, item.pkg, fullCls, "");
-        Drawable icon = loadCleanIcon(context, pm, item.pkg, fullCls, null, null, label, item, isHmg);
-        String sub = cleanSubtitle(label, item.pkg, "", item, isHmg);
-        out.put(key, new AppEntry(label, sub, item.pkg, fullCls,
-                icon, !isHmg, isHmg, isHmg ? "HMG-API" : "STOCK", item));
+        out.put(key, createConfiguredEntry(
+                context, pm, key, label, item.pkg, fullCls, null, null,
+                item, true, false, "STOCK", overrides, preferSvg));
     }
 
-    private static void addHmgApiManagerIfInstalled(Context context, PackageManager pm, Map<String, AppEntry> out) {
+    private static void addHmgApiManagerIfInstalled(
+            Context context,
+            PackageManager pm,
+            Map<String, AppEntry> out,
+            Map<String, AppCatalogOverrides.OverrideEntry> overrides,
+            boolean preferSvg) {
         String pkg = "hmgapi.app";
         String cls = "hmgapi.app.MainActivity";
         String key = componentKey(pkg, cls);
         if (out.containsKey(key) || !StockMenuCatalog.isPackageInstalled(pm, pkg)) return;
-        Drawable icon = loadCleanIcon(context, pm, pkg, cls, null, null, "HMG-API", null, true);
-        out.put(key, new AppEntry("HMG-API", "Mod Platform", pkg, cls, icon, false, true, "HMG-API", null));
+        out.put(key, createConfiguredEntry(
+                context, pm, key, "HMG-API", pkg, cls, null, null,
+                null, false, true, "HMG-API", overrides, preferSvg));
     }
 
     private static void addModEntryToStockSection(
             Context context,
             PackageManager pm,
             Map<String, AppEntry> out,
-            SwitcherClient.ModLauncherItem mod) {
+            SwitcherClient.ModLauncherItem mod,
+            Map<String, AppCatalogOverrides.OverrideEntry> overrides,
+            boolean preferSvg) {
         String fullCls = normalizeClassName(mod.packageName, mod.className);
         String key = componentKey(mod.packageName, fullCls);
         if (SELF_HOME_COMPONENT.equals(key)) return;
         if (!StockMenuCatalog.isPackageInstalled(pm, mod.packageName)) return;
         String label = !mod.title.isEmpty() ? mod.title : loadActivityLabel(pm, mod.packageName, fullCls, mod.modId);
-        Drawable icon = loadCleanIcon(context, pm, mod.packageName, fullCls, null, mod.iconBytes, label, null, true);
-        String sub = cleanSubtitle(label, mod.packageName, mod.modId, null, true);
-        out.put(key, new AppEntry(label, sub, mod.packageName, fullCls, icon, false, true, "HMG-API", null));
+        out.put(key, createConfiguredEntry(
+                context, pm, key, label, mod.packageName, fullCls, null, mod.iconBytes,
+                null, false, true, "HMG-API", overrides, preferSvg));
     }
 
     private static int topRank(AppEntry e) {
@@ -961,6 +1116,10 @@ public final class AppLauncher {
         return dot >= 0 && dot + 1 < dotted.length() ? dotted.substring(dot + 1) : dotted;
     }
 
+    static String humanizeTokenForUi(String token) {
+        return humanizeToken(shortClassName(token));
+    }
+
     private static String humanizeToken(String token) {
         if (token == null || token.isEmpty()) return "";
         String t = token.replace("Activity", "").replace("Main", "").replace('_', ' ').trim();
@@ -982,7 +1141,7 @@ public final class AppLauncher {
     private static Drawable.ConstantState cachedDefaultConstantState;
     private static final Map<String, Bitmap> SVG_BADGE_BMP_CACHE = new HashMap<String, Bitmap>();
 
-    private static Drawable loadCleanIcon(
+    private static Drawable resolveAppIcon(
             Context ctx,
             PackageManager pm,
             String pkg,
@@ -991,10 +1150,32 @@ public final class AppLauncher {
             byte[] modIconBytes,
             String label,
             StockMenuCatalog.StockItem stockItem,
-            boolean isHmgApi) {
+            boolean isHmgApi,
+            boolean preferSvg,
+            String iconOverride,
+            String autoSvg,
+            String[] resolvedSvgOut) {
+        boolean forceApk = AppCatalogOverrides.ICON_MODE_APK.equals(iconOverride);
+
+        if (ctx != null && !forceApk && iconOverride != null && !iconOverride.isEmpty()) {
+            Drawable forcedSvg = buildBadgedSvgIcon(ctx, iconOverride, isHmgApi);
+            if (forcedSvg != null) {
+                resolvedSvgOut[0] = iconOverride;
+                return forcedSvg;
+            }
+        }
+
         if (ctx != null && modIconBytes != null && modIconBytes.length > 0) {
             Drawable d = decodeBytesDrawable(ctx, modIconBytes);
             if (d != null) return d;
+        }
+
+        if (ctx != null && preferSvg && !forceApk && autoSvg != null && !autoSvg.isEmpty()) {
+            Drawable svgIcon = buildBadgedSvgIcon(ctx, autoSvg, isHmgApi);
+            if (svgIcon != null) {
+                resolvedSvgOut[0] = autoSvg;
+                return svgIcon;
+            }
         }
 
         Drawable icon = preloaded;
@@ -1002,16 +1183,23 @@ public final class AppLauncher {
             icon = loadComponentIcon(ctx, pm, pkg, cls, null);
         }
 
+        if (forceApk && icon != null) {
+            resolvedSvgOut[0] = "";
+            return icon;
+        }
+
         boolean missingOrDefault = (icon == null) || !hasCustomIconResource(pm, pkg, cls) || isDefaultAndroidIcon(pm, icon);
         if (!missingOrDefault) {
+            resolvedSvgOut[0] = "";
             return icon;
         }
 
         if (ctx != null) {
-            String svgRel = pickFallbackSvgPath(label, pkg, cls, stockItem, isHmgApi);
-            if (svgRel != null) {
-                Drawable badged = buildBadgedSvgIcon(ctx, svgRel, isHmgApi);
-                if (badged != null) return badged;
+            String fallbackSvg = (autoSvg != null && !autoSvg.isEmpty()) ? autoSvg : "icons/apps.svg";
+            Drawable badged = buildBadgedSvgIcon(ctx, fallbackSvg, isHmgApi);
+            if (badged != null) {
+                resolvedSvgOut[0] = fallbackSvg;
+                return badged;
             }
         }
         return null; // AppDrawerOverlay draws sleek rounded monogram badge when null
@@ -1101,56 +1289,89 @@ public final class AppLauncher {
             boolean isHmgApi) {
         String s = ((label == null ? "" : label) + " " + (pkg == null ? "" : pkg) + " "
                 + (cls == null ? "" : cls) + " " + (stockItem == null ? "" : stockItem.id)).toLowerCase(Locale.US);
-        if (s.contains("nemesis") || s.contains("hmgapi") || s.contains("gen5w.launcher") || s.contains("store")) {
+        if (s.contains("nemesis") || s.contains("hmgapi") || s.contains("hmg-api")) {
+            return "icons/shield.svg";
+        }
+        if (s.contains("gen5w.launcher") || s.contains("themer") || s.contains("store")) {
             return "icons/store.svg";
         }
-        if (s.contains(".ev") || s.contains("ev3") || s.contains("hev") || s.contains("phev")
-                || s.contains("driving_info") || s.contains("driving info") || s.contains("n_mode") || s.contains("n mode")) {
+        if (s.contains("seat") || s.contains("swrc")) {
+            return "icons/seat.svg";
+        }
+        if (s.contains("steering") || s.contains("buttonsettings")) {
+            return "icons/steering.svg";
+        }
+        if (s.contains("battery") || s.contains("precondition") || s.contains("12v")) {
+            return "icons/battery.svg";
+        }
+        if (s.contains(".ev") || s.contains("ev3") || s.contains("hev") || s.contains("phev") || s.contains("energy")) {
             return "icons/ev.svg";
         }
-        if (s.contains("climate") || s.contains("seat") || s.contains("pureair") || s.contains("pure air")
-                || s.contains("rear_care") || s.contains("quiet mode") || s.contains("passenger talk")) {
+        if (s.contains("climate") || s.contains("hvac") || s.contains("pureair") || s.contains("pure air")) {
             return "icons/climate.svg";
         }
-        if (s.contains("navi") || s.contains("map_app") || s.contains(".map")) {
+        if (s.contains("defrost") || s.contains("defogger")) {
+            return "icons/defrost.svg";
+        }
+        if (s.contains("camera") || s.contains("drvm") || s.contains("dvrs") || s.contains("dashcam")) {
+            return "icons/camera.svg";
+        }
+        if (s.contains("navi") || s.contains("map_app") || s.contains(".map") || s.contains("radar")) {
             return "icons/navi.svg";
         }
-        if (s.contains("drvm") || s.contains("dvrs") || s.contains("camera") || s.contains("dashcam")) {
-            return "icons/stock.svg";
+        if (s.contains("bluetooth") || s.contains("btsettings") || s.contains("btaudio")) {
+            return "icons/bluetooth.svg";
         }
-        if (s.contains("radio") || s.contains("hddata") || s.contains("doppler") || s.contains("radar")
-                || s.contains("naturesound") || s.contains("nature sound") || s.contains("sounds of nature") || s.contains("soundhound")) {
+        if (s.contains("phone") || s.contains("dialer") || s.contains("contacts") || s.contains("siri") || s.contains("voicehandler")) {
+            return "icons/phone.svg";
+        }
+        if (s.contains("wifi") || s.contains("bluelink") || s.contains("connect") || s.contains("vrm")) {
+            return "icons/wifi.svg";
+        }
+        if (s.contains("sound") || s.contains("volume") || s.contains("quiet") || s.contains("rear_care")) {
+            return "icons/volume.svg";
+        }
+        if (s.contains("music") || s.contains("naturesound") || s.contains("soundhound")) {
+            return "icons/music.svg";
+        }
+        if (s.contains("radio") || s.contains("hddata")) {
             return "icons/radio.svg";
         }
-        if (s.contains("mediagate") || s.contains("media") || s.contains("music") || s.contains("video")
-                || s.contains("btaudio") || s.contains("voicememo") || s.contains("voice memo") || s.contains("dmb")) {
+        if (s.contains("mediagate") || s.contains("media") || s.contains("video") || s.contains("voicememo")) {
             return "icons/media.svg";
         }
         if (s.contains("dipo") || s.contains("carplay") || s.contains("projection") || s.contains("android_auto")
-                || s.contains("android auto") || s.contains("carlife") || s.contains("mirrorlink")
-                || s.contains("bluetooth") || s.contains("voicedialer") || s.contains("voice dialer")) {
+                || s.contains("android auto") || s.contains("carlife") || s.contains("mirrorlink")) {
             return "icons/projection.svg";
         }
-        if (s.contains("bluelink") || s.contains("valet") || s.contains("carpay") || s.contains("iot") || s.contains("power")) {
-            return "icons/power.svg";
+        if (s.contains("userprofile") || s.contains("profile") || s.contains("passenger")) {
+            return "icons/user.svg";
         }
-        if (s.contains("notifications") || s.contains("launcher3") || s.contains("stock home") || s.contains("home")) {
+        if (s.contains("vehicle") || s.contains("driving_info") || s.contains("n_mode") || s.contains("n mode")) {
+            return "icons/car.svg";
+        }
+        if (s.contains("development") || s.contains("micom") || s.contains("maintenance")) {
+            return "icons/wrench.svg";
+        }
+        if (s.contains("valet") || s.contains("carpay") || s.contains("security")) {
+            return "icons/shield.svg";
+        }
+        if (s.contains("launcher3") || s.contains("homesetting") || s.contains("stock home") || s.contains("iot") || s.contains("home")) {
             return "icons/home.svg";
         }
-        if (s.contains("setting") || s.contains("setup") || s.contains("storage") || s.contains("userprofile")
-                || s.contains("button") || s.contains("theme") || s.contains("mymenu") || s.contains("manual") || s.contains("sml")) {
+        if (s.contains("power")) {
+            return "icons/power.svg";
+        }
+        if (s.contains("setting") || s.contains("setup") || s.contains("storage") || s.contains("theme") || s.contains("locale") || s.contains("display")) {
             return "icons/settings.svg";
         }
         if (isHmgApi) {
-            return "icons/store.svg";
+            return "icons/shield.svg";
         }
-        if (stockItem != null) {
-            return "icons/apps.svg";
-        }
-        return null;
+        return "icons/apps.svg";
     }
 
-    private static Drawable buildBadgedSvgIcon(Context ctx, String svgRelPath, boolean highlight) {
+    public static Drawable buildBadgedSvgIcon(Context ctx, String svgRelPath, boolean highlight) {
         try {
             String cacheKey = svgRelPath + (highlight ? "|hi" : "|std");
             Bitmap cached;
@@ -1201,9 +1422,11 @@ public final class AppLauncher {
         }
     }
 
+    private static final LruCache<String, Bitmap> MOD_ICON_BMP_CACHE = new LruCache<String, Bitmap>(24);
+
     private static Drawable loadComponentIcon(Context ctx, PackageManager pm, String pkg, String cls, byte[] modIconBytes) {
         if (ctx != null && modIconBytes != null && modIconBytes.length > 0) {
-            Drawable d = decodeBytesDrawable(ctx, modIconBytes);
+            Drawable d = decodeBytesDrawable(ctx, componentKey(pkg, cls) + "@" + java.util.Arrays.hashCode(modIconBytes), modIconBytes);
             if (d != null) return d;
         }
         try {
@@ -1220,10 +1443,28 @@ public final class AppLauncher {
     }
 
     private static Drawable decodeBytesDrawable(Context context, byte[] bytes) {
+        if (bytes == null || bytes.length == 0) {
+            return null;
+        }
+        return decodeBytesDrawable(context, "bytes:" + java.util.Arrays.hashCode(bytes) + ":" + bytes.length, bytes);
+    }
+
+    private static Drawable decodeBytesDrawable(Context context, String cacheKey, byte[] bytes) {
         try {
-            Bitmap bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
-            if (bmp != null) {
-                return new BitmapDrawable(context.getResources(), bmp);
+            Bitmap cached;
+            synchronized (MOD_ICON_BMP_CACHE) {
+                cached = MOD_ICON_BMP_CACHE.get(cacheKey);
+            }
+            if (cached == null || cached.isRecycled()) {
+                cached = AssetResolver.decodeBitmapBounded(bytes, 128, 128);
+                if (cached != null) {
+                    synchronized (MOD_ICON_BMP_CACHE) {
+                        MOD_ICON_BMP_CACHE.put(cacheKey, cached);
+                    }
+                }
+            }
+            if (cached != null) {
+                return new BitmapDrawable(context.getResources(), cached);
             }
         } catch (Throwable ignored) {
         }

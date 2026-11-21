@@ -633,6 +633,15 @@
             "style": { "bgColor": "#AA152232", "borderColor": "#33477BA8", "borderWidthPx": 1, "cornerRadiusPx": 14, "iconSizePx": 30, "titleSizePx": 18 }
           },
           {
+            "id": "dock_car_controls",
+            "kind": "action_pill",
+            "flexWeight": 1.1,
+            "title": "Car Controls",
+            "icon": "icons/car.svg",
+            "action": { "type": "open_car_controls" },
+            "style": { "bgColor": "#BB0E3554", "borderColor": "#8838BDF8", "borderWidthPx": 2, "cornerRadiusPx": 14, "iconSizePx": 28, "titleSizePx": 17 }
+          },
+          {
             "id": "dock_settings",
             "kind": "action_pill",
             "flexWeight": 0.9,

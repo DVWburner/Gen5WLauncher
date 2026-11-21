@@ -20,13 +20,54 @@ public final class WidgetAnimator {
 
     private WidgetAnimator() {}
 
-    public static void attach(final View view, final AnimationSpec spec) {
-        attach(view, spec, true);
+    public static final class IdleHandle {
+        public final View target;
+        public final Animator animator;
+        private boolean paused = false;
+
+        IdleHandle(View target, Animator animator) {
+            this.target = target;
+            this.animator = animator;
+        }
+
+        public void setPaused(boolean nextPaused) {
+            if (this.paused == nextPaused) {
+                return;
+            }
+            this.paused = nextPaused;
+            if (nextPaused) {
+                animator.cancel();
+                resetTransform(target);
+            } else if (target.getWindowToken() != null && target.getVisibility() == View.VISIBLE) {
+                if (!animator.isStarted()) {
+                    animator.start();
+                }
+            }
+        }
+
+        public void release() {
+            paused = true;
+            animator.cancel();
+            resetTransform(target);
+        }
+
+        private static void resetTransform(View v) {
+            if (v != null) {
+                v.setAlpha(1f);
+                v.setScaleX(1f);
+                v.setScaleY(1f);
+                v.setTranslationY(0f);
+            }
+        }
     }
 
-    public static void attach(final View view, final AnimationSpec spec, boolean interactive) {
+    public static IdleHandle attach(final View view, final AnimationSpec spec) {
+        return attach(view, spec, true);
+    }
+
+    public static IdleHandle attach(final View view, final AnimationSpec spec, boolean interactive) {
         if (view == null || spec == null) {
-            return;
+            return null;
         }
         if (interactive) {
             final float pressScale = (spec.pressScale > 0.5f && spec.pressScale < 1.0f) ? spec.pressScale : 0.96f;
@@ -67,10 +108,11 @@ public final class WidgetAnimator {
 
         final Animator idle = createIdleAnimator(view, spec);
         if (idle != null) {
+            final IdleHandle handle = new IdleHandle(view, idle);
             view.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
                 @Override
                 public void onViewAttachedToWindow(View v) {
-                    if (!idle.isStarted()) {
+                    if (!handle.paused && !idle.isStarted()) {
                         idle.start();
                     }
                 }
@@ -83,7 +125,9 @@ public final class WidgetAnimator {
             if (view.getWindowToken() != null) {
                 idle.start();
             }
+            return handle;
         }
+        return null;
     }
 
     public static Animator createIdleAnimator(View target, AnimationSpec spec) {

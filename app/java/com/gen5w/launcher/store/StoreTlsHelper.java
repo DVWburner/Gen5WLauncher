@@ -81,6 +81,75 @@ public final class StoreTlsHelper {
             + "/q4AaOeMSQ+2b1tbFfLn\n"
             + "-----END CERTIFICATE-----\n";
 
+    private static final String GTS_ROOT_R1_PEM =
+            "-----BEGIN CERTIFICATE-----\n"
+            + "MIIFVzCCAz+gAwIBAgINAgPlk28xsBNJiGuiFzANBgkqhkiG9w0BAQwFADBHMQsw\n"
+            + "CQYDVQQGEwJVUzEiMCAGA1UEChMZR29vZ2xlIFRydXN0IFNlcnZpY2VzIExMQzEU\n"
+            + "MBIGA1UEAxMLR1RTIFJvb3QgUjEwHhcNMTYwNjIyMDAwMDAwWhcNMzYwNjIyMDAw\n"
+            + "MDAwWjBHMQswCQYDVQQGEwJVUzEiMCAGA1UEChMZR29vZ2xlIFRydXN0IFNlcnZp\n"
+            + "Y2VzIExMQzEUMBIGA1UEAxMLR1RTIFJvb3QgUjEwggIiMA0GCSqGSIb3DQEBAQUA\n"
+            + "A4ICDwAwggIKAoICAQC2EQKLHuOhd5s73L+UPreVp0A8of2C+X0yBoJx9vaMf/vo\n"
+            + "27xqLpeXo4xL+Sv2sfnOhB2x+cWX3u+58qPpvBKJXqeqUqv4IyfLpLGcY9vXmX7w\n"
+            + "Cl7raKb0xlpHDU0QM+NOsROjyBhsS+z8CZDfnWQpJSMHobTSPS5g4M/SCYe7zUjw\n"
+            + "TcLCeoiKu7rPWRnWr4+wB7CeMfGCwcDfLqZtbBkOtdh+JhpFAz2weaSUKK0Pfybl\n"
+            + "qAj+lug8aJRT7oM6iCsVlgmy4HqMLnXWnOunVmSPlk9orj2XwoSPwLxAwAtcvfaH\n"
+            + "szVsrBhQf4TgTM2S0yDpM7xSma8ytSmzJSq0SPly4cpk9+aCEI3oncKKiPo4Zor8\n"
+            + "Y/kB+Xj9e1x3+naH+uzfsQ55lVe0vSbv1gHR6xYKu44LtcXFilWr06zqkUspzBmk\n"
+            + "MiVOKvFlRNACzqrOSbTqn3yDsEB750Orp2yjj32JgfpMpf/VjsPOS+C12LOORc92\n"
+            + "wO1AK/1TD7Cn1TsNsYqiA94xrcx36m97PtbfkSIS5r762DL8EGMUUXLeXdYWk70p\n"
+            + "aDPvOmbsB4om3xPXV2V4J95eSRQAogB/mqghtqmxlbCluQ0WEdrHbEg8QOB+DVrN\n"
+            + "VjzRlwW5y0vtOUucxD/SVRNuJLDWcfr0wbrM7Rv1/oFB2ACYPTrIrnqYNxgFlQID\n"
+            + "AQABo0IwQDAOBgNVHQ8BAf8EBAMCAYYwDwYDVR0TAQH/BAUwAwEB/zAdBgNVHQ4E\n"
+            + "FgQU5K8rJnEaK0gnhS9SZizv8IkTcT4wDQYJKoZIhvcNAQEMBQADggIBAJ+qQibb\n"
+            + "C5u+/x6Wki4+omVKapi6Ist9wTrYggoGxval3sBOh2Z5ofmmWJyq+bXmYOfg6LEe\n"
+            + "QkEzCzc9zolwFcq1JKjPa7XSQCGYzyI0zzvFIoTgxQ6KfF2I5DUkzps+GlQebtuy\n"
+            + "h6f88/qBVRRiClmpIgUxPoLW7ttXNLwzldMXG+gnoot7TiYaelpkttGsN/H9oPM4\n"
+            + "7HLwEXWdyzRSjeZ2axfG34arJ45JK3VmgRAhpuo+9K4l/3wV3s6MJT/KYnAK9y8J\n"
+            + "ZgfIPxz88NtFMN9iiMG1D53Dn0reWVlHxYciNuaCp+0KueIHoI17eko8cdLiA6Ef\n"
+            + "MgfdG+RCzgwARWGAtQsgWSl4vflVy2PFPEz0tv/bal8xa5meLMFrUKTX5hgUvYU/\n"
+            + "Z6tGn6D/Qqc6f1zLXbBwHSs09dR2CQzreExZBfMzQsNhFRAbd03OIozUhfJFfbdT\n"
+            + "6u9AWpQKXCBfTkBdYiJ23//OYb2MI3jSNwLgjt7RETeJ9r/tSQdirpLsQBqvFAnZ\n"
+            + "0E6yove+7u7Y/9waLd64NnHi/Hm3lCXRSHNboTXns5lndcEZOitHTtNCjv0xyBZm\n"
+            + "2tIMPNuzjsmhDYAPexZ3FL//2wmUspO8IFgV6dtxQ/PeEMMA3KgqlbbC1j+Qa3bb\n"
+            + "bP6MvPJwNQzcmRk13NfIRmPVNnGuV/u3gm3c\n"
+            + "-----END CERTIFICATE-----\n";
+
+    private static final String GTS_ROOT_R4_PEM =
+            "-----BEGIN CERTIFICATE-----\n"
+            + "MIICCTCCAY6gAwIBAgINAgPlwGjvYxqccpBQUjAKBggqhkjOPQQDAzBHMQswCQYD\n"
+            + "VQQGEwJVUzEiMCAGA1UEChMZR29vZ2xlIFRydXN0IFNlcnZpY2VzIExMQzEUMBIG\n"
+            + "A1UEAxMLR1RTIFJvb3QgUjQwHhcNMTYwNjIyMDAwMDAwWhcNMzYwNjIyMDAwMDAw\n"
+            + "WjBHMQswCQYDVQQGEwJVUzEiMCAGA1UEChMZR29vZ2xlIFRydXN0IFNlcnZpY2Vz\n"
+            + "IExMQzEUMBIGA1UEAxMLR1RTIFJvb3QgUjQwdjAQBgcqhkjOPQIBBgUrgQQAIgNi\n"
+            + "AATzdHOnaItgrkO4NcWBMHtLSZ37wWHO5t5GvWvVYRg1rkDdc/eJkTBa6zzuhXyi\n"
+            + "QHY7qca4R9gq55KRanPpsXI5nymfopjTX15YhmUPoYRlBtHci8nHc8iMai/lxKvR\n"
+            + "HYqjQjBAMA4GA1UdDwEB/wQEAwIBhjAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQW\n"
+            + "BBSATNbrdP9JNqPV2Py1PsVq8JQdjDAKBggqhkjOPQQDAwNpADBmAjEA6ED/g94D\n"
+            + "9J+uHXqnLrmvT/aDHQ4thQEd0dlq7A/Cr8deVl5c1RxYIigL9zC2L7F8AjEA8GE8\n"
+            + "p/SgguMh1YQdc4acLa/KNJvxn7kjNuK8YAOdgLOaVsjh4rsUecrNIdSUtUlD\n"
+            + "-----END CERTIFICATE-----\n";
+
+    private static final String DIGICERT_GLOBAL_ROOT_G2_PEM =
+            "-----BEGIN CERTIFICATE-----\n"
+            + "MIIDjjCCAnagAwIBAgIQAzrx5qcRqaC7KGSxHQn65TANBgkqhkiG9w0BAQsFADBhMQswCQYDVQQG\n"
+            + "EwJVUzEVMBMGA1UEChMMRGlnaUNlcnQgSW5jMRkwFwYDVQQLExB3d3cuZGlnaWNlcnQuY29tMSAw\n"
+            + "HgYDVQQDExdEaWdpQ2VydCBHbG9iYWwgUm9vdCBHMjAeFw0xMzA4MDExMjAwMDBaFw0zODAxMTUx\n"
+            + "MjAwMDBaMGExCzAJBgNVBAYTAlVTMRUwEwYDVQQKEwxEaWdpQ2VydCBJbmMxGTAXBgNVBAsTEHd3\n"
+            + "dy5kaWdpY2VydC5jb20xIDAeBgNVBAMTF0RpZ2lDZXJ0IEdsb2JhbCBSb290IEcyMIIBIjANBgkq\n"
+            + "hkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuzfNNNx7a8myaJCtSnX/RrohCgiN9RlUyfuI2/Ou8jqJ\n"
+            + "kTx65qsGGmvPrC3oXgkkRLpimn7Wo6h+4FR1IAWsULecYxpsMNzaHxmx1x7e/dfgy5SDN67sH0NO\n"
+            + "3Xss0r0upS/kqbitOtSZpLYl6ZtrAGCSYP9PIUkY92eQq2EGnI/yuum06ZIya7XzV+hdG82MHauV\n"
+            + "BJVJ8zUtluNJbd134/tJS7SsVQepj5WztCO7TG1F8PapspUwtP1MVYwnSlcUfIKdzXOS0xZKBgyM\n"
+            + "UNGPHgm+F6HmIcr9g+UQvIOlCsRnKPZzFBQ9RnbDhxSJITRNrw9FDKZJobq7nMWxM4MphQIDAQAB\n"
+            + "o0IwQDAPBgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB/wQEAwIBhjAdBgNVHQ4EFgQUTiJUIBiV5uNu\n"
+            + "5g/6+rkS7QYXjzkwDQYJKoZIhvcNAQELBQADggEBAGBnKJRvDkhj6zHd6mcY1Yl9PMWLSn/pvtsr\n"
+            + "F9+wX3N3KjITOYFnQoQj8kVnNeyIv/iPsGEMNKSuIEyExtv4NeF22d+mQrvHRAiGfzZ0JFrabA0U\n"
+            + "WTW98kndth/Jsw1HKj2ZL7tcu7XUIOGZX1NGFdtom/DzMNU+MeKNhJ7jitralj41E6Vf8PlwUHBH\n"
+            + "QRFXGU7Aj64GxJUTFy8bJZ918rGOmaFvE7FBcf6IKshPECBV1/MUReXgRPTqh5Uykw7+U0b6LJ3/\n"
+            + "iyK5S9kJRaTepLiaWN0bfVKfjllDiIGknibVb63dDcY3fe0Dkhvld1927jyNxF1WW6LZZm6zNTfl\n"
+            + "MrY=\n"
+            + "-----END CERTIFICATE-----\n";
+
     private static volatile SSLSocketFactory cachedFactory;
     private static volatile X509TrustManager cachedTrustManager;
 
@@ -128,10 +197,11 @@ public final class StoreTlsHelper {
         KeyStore extraKs = KeyStore.getInstance(KeyStore.getDefaultType());
         extraKs.load(null, null);
         CertificateFactory cf = CertificateFactory.getInstance("X.509");
-        Certificate x1 = cf.generateCertificate(new ByteArrayInputStream(ISRG_ROOT_X1_PEM.getBytes("US-ASCII")));
-        Certificate x2 = cf.generateCertificate(new ByteArrayInputStream(ISRG_ROOT_X2_PEM.getBytes("US-ASCII")));
-        extraKs.setCertificateEntry("isrg_root_x1", x1);
-        extraKs.setCertificateEntry("isrg_root_x2", x2);
+        extraKs.setCertificateEntry("isrg_root_x1", cf.generateCertificate(new ByteArrayInputStream(ISRG_ROOT_X1_PEM.getBytes("US-ASCII"))));
+        extraKs.setCertificateEntry("isrg_root_x2", cf.generateCertificate(new ByteArrayInputStream(ISRG_ROOT_X2_PEM.getBytes("US-ASCII"))));
+        extraKs.setCertificateEntry("gts_root_r1", cf.generateCertificate(new ByteArrayInputStream(GTS_ROOT_R1_PEM.getBytes("US-ASCII"))));
+        extraKs.setCertificateEntry("gts_root_r4", cf.generateCertificate(new ByteArrayInputStream(GTS_ROOT_R4_PEM.getBytes("US-ASCII"))));
+        extraKs.setCertificateEntry("digicert_global_root_g2", cf.generateCertificate(new ByteArrayInputStream(DIGICERT_GLOBAL_ROOT_G2_PEM.getBytes("US-ASCII"))));
 
         TrustManagerFactory extraTmf = TrustManagerFactory.getInstance(alg);
         extraTmf.init(extraKs);
@@ -196,7 +266,9 @@ public final class StoreTlsHelper {
                     return;
                 } catch (CertificateException ex) {
                     if (primary != null) {
-                        throw primary;
+                        throw new CertificateException(
+                                "TLS verification failed (system: " + primary.getMessage()
+                                + "; embedded CAs: " + ex.getMessage() + ")", ex);
                     }
                     throw ex;
                 }
@@ -231,33 +303,45 @@ public final class StoreTlsHelper {
         }
 
         @Override
+        public Socket createSocket() throws IOException {
+            return configureSocket(delegate.createSocket(), null);
+        }
+
+        @Override
         public Socket createSocket(Socket s, String host, int port, boolean autoClose) throws IOException {
-            return configureSocket(delegate.createSocket(s, host, port, autoClose));
+            return configureSocket(delegate.createSocket(s, host, port, autoClose), host);
         }
 
         @Override
         public Socket createSocket(String host, int port) throws IOException {
-            return configureSocket(delegate.createSocket(host, port));
+            return configureSocket(delegate.createSocket(host, port), host);
         }
 
         @Override
         public Socket createSocket(String host, int port, InetAddress localHost, int localPort) throws IOException {
-            return configureSocket(delegate.createSocket(host, port, localHost, localPort));
+            return configureSocket(delegate.createSocket(host, port, localHost, localPort), host);
         }
 
         @Override
         public Socket createSocket(InetAddress host, int port) throws IOException {
-            return configureSocket(delegate.createSocket(host, port));
+            return configureSocket(delegate.createSocket(host, port), host != null ? host.getHostName() : null);
         }
 
         @Override
         public Socket createSocket(InetAddress address, int port, InetAddress localAddress, int localPort) throws IOException {
-            return configureSocket(delegate.createSocket(address, port, localAddress, localPort));
+            return configureSocket(delegate.createSocket(address, port, localAddress, localPort), address != null ? address.getHostName() : null);
         }
 
-        private static Socket configureSocket(Socket s) {
+        private static Socket configureSocket(Socket s, String sniHost) {
             if (s instanceof SSLSocket) {
                 SSLSocket ssl = (SSLSocket) s;
+                if (sniHost != null && !sniHost.isEmpty()) {
+                    try {
+                        java.lang.reflect.Method setHostname = ssl.getClass().getMethod("setHostname", String.class);
+                        setHostname.invoke(ssl, sniHost);
+                    } catch (Throwable ignored) {
+                    }
+                }
                 String[] supportedProtos = ssl.getSupportedProtocols();
                 if (supportedProtos != null) {
                     Set<String> want = new LinkedHashSet<String>();

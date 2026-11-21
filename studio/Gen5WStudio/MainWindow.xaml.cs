@@ -43,6 +43,16 @@ public partial class MainWindow : Window
     private string inspectorLastMarginText = "";
     private string inspectorLastBoundsWText = "";
     private string inspectorLastBoundsHText = "";
+    private string inspectorLastTextColorText = "";
+    private string inspectorLastSubColorText = "";
+    private string inspectorLastBgColorText = "";
+    private string inspectorLastBorderColorText = "";
+    private string inspectorLastAccentColorText = "";
+    private string inspectorLastRadiusText = "";
+    private const int MaxUndoSteps = 50;
+    private readonly List<string> undoStack = new();
+    private readonly List<string> redoStack = new();
+    private string? lastSavedUndoJson;
     private static readonly System.Windows.Media.Brush ExplicitValueBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(241, 245, 249));
     private static readonly System.Windows.Media.Brush AutoValueBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(148, 163, 184));
 
@@ -58,6 +68,7 @@ public partial class MainWindow : Window
         InitDropdowns();
         StudioCanvas.NodeSelected += OnCanvasNodeSelected;
         StudioCanvas.PackMutated += OnCanvasPackMutated;
+        PreviewKeyDown += OnMainWindowPreviewKeyDown;
         Closing += (_, _) =>
         {
             if (HasActiveTheme)
@@ -70,6 +81,7 @@ public partial class MainWindow : Window
             currentPack = workspace.SwitchToThemeDirectory(themes[0].Directory);
             currentPack.Normalize();
             hasActiveTheme = true;
+            ResetUndoHistory();
             ApplyWorkspaceActiveState();
             BindWholePack(currentPack.Root);
             RefreshThemeSelectorCombo(workspace.WorkspaceDir);
@@ -159,13 +171,121 @@ public partial class MainWindow : Window
 
         if (dlg.ShowDialog() == true)
         {
-            box.Text = dlg.IsCleared ? "" : dlg.SelectedHex;
+            box.Text = dlg.IsCleared ? (ReferenceEquals(box, BgDimBox) ? "#00000000" : "") : dlg.SelectedHex;
             applyEdit();
         }
         else if (changed)
         {
             box.Text = original;
             applyEdit();
+        }
+    }
+
+    private void ResetUndoHistory()
+    {
+        undoStack.Clear();
+        redoStack.Clear();
+        lastSavedUndoJson = HasActiveTheme ? currentPack.ToJsonString() : null;
+    }
+
+    private void SaveAndRecordHistory()
+    {
+        if (!HasActiveTheme) return;
+        string snap = currentPack.ToJsonString();
+        if (lastSavedUndoJson != null && !string.Equals(snap, lastSavedUndoJson, StringComparison.Ordinal))
+        {
+            undoStack.Add(lastSavedUndoJson);
+            if (undoStack.Count > MaxUndoSteps)
+                undoStack.RemoveAt(0);
+            redoStack.Clear();
+        }
+        lastSavedUndoJson = snap;
+        workspace.SaveCurrentTheme(currentPack);
+    }
+
+    private void PerformUndo()
+    {
+        if (!HasActiveTheme || undoStack.Count == 0) return;
+        string prevJson = undoStack[^1];
+        undoStack.RemoveAt(undoStack.Count - 1);
+        if (lastSavedUndoJson != null)
+            redoStack.Add(lastSavedUndoJson);
+        string? prevSelId = selectedNode?.Id;
+        currentPack = ThemePackModel.FromJson(prevJson);
+        lastSavedUndoJson = currentPack.ToJsonString();
+        workspace.SaveCurrentTheme(currentPack);
+        BindWholePack(FindNodeById(currentPack.Root, prevSelId) ?? currentPack.Root);
+        StatusFooterText.Text = $"Undo ({undoStack.Count} step(s) remaining)";
+    }
+
+    private void PerformRedo()
+    {
+        if (!HasActiveTheme || redoStack.Count == 0) return;
+        string nextJson = redoStack[^1];
+        redoStack.RemoveAt(redoStack.Count - 1);
+        if (lastSavedUndoJson != null)
+            undoStack.Add(lastSavedUndoJson);
+        string? prevSelId = selectedNode?.Id;
+        currentPack = ThemePackModel.FromJson(nextJson);
+        lastSavedUndoJson = currentPack.ToJsonString();
+        workspace.SaveCurrentTheme(currentPack);
+        BindWholePack(FindNodeById(currentPack.Root, prevSelId) ?? currentPack.Root);
+        StatusFooterText.Text = $"Redo ({redoStack.Count} step(s) remaining)";
+    }
+
+    private static LayoutNodeModel? FindNodeById(LayoutNodeModel root, string? id)
+    {
+        if (string.IsNullOrWhiteSpace(id)) return null;
+        if (string.Equals(root.Id, id, StringComparison.Ordinal)) return root;
+        if (root.Children == null) return null;
+        foreach (var ch in root.Children)
+        {
+            var found = FindNodeById(ch, id);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    private void OnMainWindowPreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (!HasActiveTheme) return;
+        var mods = System.Windows.Input.Keyboard.Modifiers;
+        bool inTextInput = System.Windows.Input.Keyboard.FocusedElement is System.Windows.Controls.Primitives.TextBoxBase
+                           || System.Windows.Input.Keyboard.FocusedElement is ComboBox;
+        if ((mods & System.Windows.Input.ModifierKeys.Control) == System.Windows.Input.ModifierKeys.Control)
+        {
+            if (e.Key == System.Windows.Input.Key.S)
+            {
+                e.Handled = true;
+                OnSaveCurrentClick(this, new RoutedEventArgs());
+                return;
+            }
+            if (!inTextInput && e.Key == System.Windows.Input.Key.Z)
+            {
+                e.Handled = true;
+                PerformUndo();
+                return;
+            }
+            if (!inTextInput && e.Key == System.Windows.Input.Key.Y)
+            {
+                e.Handled = true;
+                PerformRedo();
+                return;
+            }
+            if (!inTextInput && e.Key == System.Windows.Input.Key.D)
+            {
+                e.Handled = true;
+                OnDuplicateClick(this, new RoutedEventArgs());
+                return;
+            }
+        }
+        else if (mods == System.Windows.Input.ModifierKeys.None && !inTextInput && e.Key == System.Windows.Input.Key.Delete)
+        {
+            if (selectedNode != null && selectedNode != currentPack.Root)
+            {
+                e.Handled = true;
+                OnDeleteClick(this, new RoutedEventArgs());
+            }
         }
     }
 
@@ -218,6 +338,7 @@ public partial class MainWindow : Window
         ThemeSelectorCombo.IsEnabled = active;
         TopBarCheck.IsEnabled = active;
         ExportUsbBtn.IsEnabled = true;
+        AiContextBtn.IsEnabled = true;
 
         if (!active)
         {
@@ -353,6 +474,15 @@ public partial class MainWindow : Window
         StatusFooterText.Text = "Cleared recently opened history.";
     }
 
+    private void OnOpenAiContextClick(object sender, RoutedEventArgs e)
+    {
+        var dlg = new AiContextDialog(HasActiveTheme ? currentPack : null)
+        {
+            Owner = this
+        };
+        dlg.ShowDialog();
+    }
+
     private void OnRecentDropdownClick(object sender, RoutedEventArgs e)
     {
         var menu = new ContextMenu();
@@ -395,12 +525,13 @@ public partial class MainWindow : Window
         {
             try { workspace.SaveCurrentTheme(currentPack); } catch { }
         }
-        workspace.CloseWorkspace();
-        hasActiveTheme = false;
-        currentPack = new ThemePackModel();
-        ApplyWorkspaceActiveState();
-        StatusFooterText.Text = "Closed workspace.";
-    }
+            workspace.CloseWorkspace();
+            hasActiveTheme = false;
+            currentPack = new ThemePackModel();
+            ResetUndoHistory();
+            ApplyWorkspaceActiveState();
+            StatusFooterText.Text = "Closed workspace.";
+        }
 
     private void OpenWorkspaceFolderPath(string folderPath)
     {
@@ -426,6 +557,7 @@ public partial class MainWindow : Window
             currentPack = workspace.SwitchToThemeDirectory(entries[0].Directory);
             currentPack.Normalize();
             hasActiveTheme = true;
+            ResetUndoHistory();
             ApplyWorkspaceActiveState();
             RefreshIconsDropdown();
             RefreshFontsDropdown();
@@ -713,11 +845,17 @@ public partial class MainWindow : Window
                     SubSizeBox.Text = node.Style?.SubtitleSizePx?.ToString(CultureInfo.InvariantCulture) ?? "";
                     bool isBold = string.Equals(node.Style?.FontWeight, "bold", StringComparison.OrdinalIgnoreCase)
                                   || (!string.Equals(node.Style?.FontWeight, "normal", StringComparison.OrdinalIgnoreCase)
-                                      && kind is "tile" or "action_pill" or "ev_hero" or "switcher_status" or "clock" or "soc_ring");
+                                      && kind is "tile" or "action_pill" or "ev_hero" or "switcher_status" or "clock"
+                                              or "soc_ring" or "ring_gauge" or "telemetry_gauge"
+                                              or "text" or "sensor" or "label" or "telemetry_badge" or "progress_bar");
                     BoldCheck.IsChecked = isBold;
                     ItalicCheck.IsChecked = node.Style?.FontItalic == true;
                     TextColorBox.Text = node.Style?.TextColor ?? "#FFF1F5F9";
+                    TextColorBox.Foreground = !string.IsNullOrWhiteSpace(node.Style?.TextColor) ? ExplicitValueBrush : AutoValueBrush;
                     SubColorBox.Text = node.Style?.SubTextColor ?? "#FF94A3B8";
+                    SubColorBox.Foreground = !string.IsNullOrWhiteSpace(node.Style?.SubTextColor) ? ExplicitValueBrush : AutoValueBrush;
+                    inspectorLastTextColorText = TextColorBox.Text.Trim();
+                    inspectorLastSubColorText = SubColorBox.Text.Trim();
                     SelectMatchingComboItem(AlignCombo, node.Style?.TextAlign ?? "left");
                     SelectMatchingComboItem(VAlignCombo, node.Style?.VerticalAlign ?? "center");
 
@@ -769,16 +907,32 @@ public partial class MainWindow : Window
 
             PopulateGeometryInspector(node, forceRefreshFocusedFields);
 
+            string tokenAccent = !string.IsNullOrWhiteSpace(currentPack.Tokens?.AccentColor)
+                ? currentPack.Tokens!.AccentColor
+                : "#FF38BDF8";
+            int defaultRadius = (!node.IsPanel && string.Equals(kind, "action_pill", StringComparison.OrdinalIgnoreCase))
+                ? 999
+                : (currentPack.Tokens?.CornerRadiusPx ?? 20);
+
             BgColorBox.Text = node.Style?.BgColor ?? "#D4111D2D";
+            BgColorBox.Foreground = !string.IsNullOrWhiteSpace(node.Style?.BgColor) ? ExplicitValueBrush : AutoValueBrush;
             BgEndBox.Text = node.Style?.BgEndColor ?? "";
             BorderColorBox.Text = node.Style?.BorderColor ?? "#4438BDF8";
+            BorderColorBox.Foreground = !string.IsNullOrWhiteSpace(node.Style?.BorderColor) ? ExplicitValueBrush : AutoValueBrush;
             BorderWidthBox.Text = node.Style?.BorderWidthPx?.ToString() ?? "";
-            AccentColorBox.Text = node.Style?.AccentColor ?? "#FF38BDF8";
-            RadiusBox.Text = (node.Style?.CornerRadiusPx ?? 20).ToString();
+            AccentColorBox.Text = node.Style?.AccentColor ?? tokenAccent;
+            AccentColorBox.Foreground = !string.IsNullOrWhiteSpace(node.Style?.AccentColor) ? ExplicitValueBrush : AutoValueBrush;
+            RadiusBox.Text = (node.Style?.CornerRadiusPx ?? defaultRadius).ToString(CultureInfo.InvariantCulture);
+            RadiusBox.Foreground = node.Style?.CornerRadiusPx.HasValue == true ? ExplicitValueBrush : AutoValueBrush;
             OpacityBox.Text = node.Style?.Opacity?.ToString(CultureInfo.InvariantCulture) ?? "";
             TileAnimBox.Text = node.Style?.BgAnimAsset ?? node.Style?.BgBitmapAsset ?? "";
             IdleEffectCombo.SelectedItem = node.Animation?.IdleEffect ?? "none";
             TransparentCheck.IsChecked = node.Style?.Transparent == true;
+
+            inspectorLastBgColorText = BgColorBox.Text.Trim();
+            inspectorLastBorderColorText = BorderColorBox.Text.Trim();
+            inspectorLastAccentColorText = AccentColorBox.Text.Trim();
+            inspectorLastRadiusText = RadiusBox.Text.Trim();
 
             UpdateInspectorFieldVisibility(node);
         }
@@ -861,7 +1015,7 @@ public partial class MainWindow : Window
                 SetGridColumnVisible(SubtitleCol, SubtitleCell, showSub, 2.0);
                 SetGridColumnVisible(BadgeCol, BadgeCell, showChip, 1.0);
 
-                bool showSensor = isText || isBar || isRing || isBadge || isTile || isHero;
+                bool showSensor = isText || isBar || isRing || isBadge || isTile || isPill || isHero;
                 SensorBindGroup.Visibility = showSensor ? Visibility.Visible : Visibility.Collapsed;
 
                 bool showUnit = showSensor;
@@ -1010,7 +1164,27 @@ public partial class MainWindow : Window
 
         if (selectedNode.IsPanel)
         {
-            selectedNode.Layout = NodeTypeCombo.SelectedItem?.ToString() ?? selectedNode.Layout;
+            string prevLayout = selectedNode.Layout ?? "flex_col";
+            string nextLayout = NodeTypeCombo.SelectedItem?.ToString() ?? prevLayout;
+            if (!string.Equals(prevLayout, "freeform", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(nextLayout, "freeform", StringComparison.OrdinalIgnoreCase)
+                && selectedNode.Children != null)
+            {
+                foreach (var child in selectedNode.Children)
+                {
+                    if (child.Bounds is not { Length: >= 4 } && StudioCanvas.TryGetNodeLocalRefRect(child, out Rect localRect))
+                    {
+                        child.Bounds = new[]
+                        {
+                            Math.Max(0, Math.Round(localRect.X)),
+                            Math.Max(0, Math.Round(localRect.Y)),
+                            Math.Max(20, Math.Round(localRect.Width)),
+                            Math.Max(20, Math.Round(localRect.Height))
+                        };
+                    }
+                }
+            }
+            selectedNode.Layout = nextLayout;
             if (PageTitleCell.Visibility == Visibility.Visible)
                 selectedNode.PageTitle = NullIfEmpty(PageTitleBox.Text);
             selectedNode.PaddingPx = ParseInsets(PaddingBox.Text);
@@ -1080,9 +1254,15 @@ public partial class MainWindow : Window
                     selectedNode.Style.SubtitleSizePx = ParseOptDouble(SubSizeBox.Text);
                 selectedNode.Style.FontWeight = BoldCheck.IsChecked == true ? "bold" : "normal";
                 selectedNode.Style.FontItalic = ItalicCheck.IsChecked == true ? true : null;
-                selectedNode.Style.TextColor = NullIfEmpty(TextColorBox.Text);
+                string txtColorTrim = TextColorBox.Text.Trim();
+                if (!string.Equals(txtColorTrim, inspectorLastTextColorText, StringComparison.Ordinal) || !string.IsNullOrWhiteSpace(selectedNode.Style.TextColor))
+                    selectedNode.Style.TextColor = NullIfEmpty(txtColorTrim);
                 if (SubColorCell.Visibility == Visibility.Visible)
-                    selectedNode.Style.SubTextColor = NullIfEmpty(SubColorBox.Text);
+                {
+                    string subColorTrim = SubColorBox.Text.Trim();
+                    if (!string.Equals(subColorTrim, inspectorLastSubColorText, StringComparison.Ordinal) || !string.IsNullOrWhiteSpace(selectedNode.Style.SubTextColor))
+                        selectedNode.Style.SubTextColor = NullIfEmpty(subColorTrim);
+                }
             }
             if (AlignHCell.Visibility == Visibility.Visible)
                 selectedNode.Style.TextAlign = (AlignCombo.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "left";
@@ -1113,7 +1293,14 @@ public partial class MainWindow : Window
                 selectedNode.Action.Cmd = NullIfEmpty(ActionCmdBox.Text);
                 selectedNode.Action.Package = NullIfEmpty(ActionPkgBox.Text);
                 string cls = ActionClsBox.Text.Trim();
-                if (cls.Contains("android.") || cls.Contains("com.hkmc.intent."))
+                bool isBroadcastType = actType.Equals("broadcast", StringComparison.OrdinalIgnoreCase)
+                                       || actType.Equals("root_broadcast", StringComparison.OrdinalIgnoreCase);
+                bool looksLikeIntentAction = isBroadcastType
+                                             || cls.StartsWith("android.intent.action.", StringComparison.OrdinalIgnoreCase)
+                                             || cls.StartsWith("android.settings.", StringComparison.OrdinalIgnoreCase)
+                                             || cls.Contains(".intent.action.", StringComparison.OrdinalIgnoreCase)
+                                             || cls.Contains("com.hkmc.intent.", StringComparison.OrdinalIgnoreCase);
+                if (looksLikeIntentAction)
                 {
                     selectedNode.Action.IntentAction = NullIfEmpty(cls);
                     selectedNode.Action.Class = null;
@@ -1133,21 +1320,38 @@ public partial class MainWindow : Window
         {
             if (BgGradientRow.Visibility == Visibility.Visible)
             {
-                selectedNode.Style.BgColor = NullIfEmpty(BgColorBox.Text);
+                string bgTrim = BgColorBox.Text.Trim();
+                if (!string.Equals(bgTrim, inspectorLastBgColorText, StringComparison.Ordinal) || !string.IsNullOrWhiteSpace(selectedNode.Style.BgColor))
+                    selectedNode.Style.BgColor = NullIfEmpty(bgTrim);
                 selectedNode.Style.BgEndColor = NullIfEmpty(BgEndBox.Text);
             }
             if (BorderColorCell.Visibility == Visibility.Visible)
-                selectedNode.Style.BorderColor = NullIfEmpty(BorderColorBox.Text);
+            {
+                string borderTrim = BorderColorBox.Text.Trim();
+                if (!string.Equals(borderTrim, inspectorLastBorderColorText, StringComparison.Ordinal) || !string.IsNullOrWhiteSpace(selectedNode.Style.BorderColor))
+                    selectedNode.Style.BorderColor = NullIfEmpty(borderTrim);
+            }
             if (BorderWidthCell.Visibility == Visibility.Visible)
                 selectedNode.Style.BorderWidthPx = ParseOptInt(BorderWidthBox.Text);
             if (AccentColorCell.Visibility == Visibility.Visible)
-                selectedNode.Style.AccentColor = NullIfEmpty(AccentColorBox.Text);
+            {
+                string accTrim = AccentColorBox.Text.Trim();
+                if (!string.Equals(accTrim, inspectorLastAccentColorText, StringComparison.Ordinal) || !string.IsNullOrWhiteSpace(selectedNode.Style.AccentColor))
+                    selectedNode.Style.AccentColor = NullIfEmpty(accTrim);
+            }
             if (RadiusCell.Visibility == Visibility.Visible)
-                selectedNode.Style.CornerRadiusPx = ParseOptInt(RadiusBox.Text);
+            {
+                string radTrim = RadiusBox.Text.Trim();
+                if (!string.Equals(radTrim, inspectorLastRadiusText, StringComparison.Ordinal) || selectedNode.Style.CornerRadiusPx.HasValue)
+                    selectedNode.Style.CornerRadiusPx = ParseOptInt(radTrim);
+            }
             if (OpacityCell.Visibility == Visibility.Visible)
                 selectedNode.Style.Opacity = ParseOptDouble(OpacityBox.Text);
             if (TransparentCheck.Visibility == Visibility.Visible)
-                selectedNode.Style.Transparent = TransparentCheck.IsChecked == true;
+            {
+                bool isTrans = TransparentCheck.IsChecked == true;
+                selectedNode.Style.Transparent = isTrans ? true : (selectedNode.Style.Transparent.HasValue ? false : null);
+            }
 
             if (TileAnimRow.Visibility == Visibility.Visible)
             {
@@ -1188,7 +1392,7 @@ public partial class MainWindow : Window
         suppressEvents = true;
         try { PopulateGeometryInspector(selectedNode); }
         finally { suppressEvents = false; }
-        workspace.SaveCurrentTheme(currentPack);
+        SaveAndRecordHistory();
         selectedNode.NotifyLabelChanged();
         SelectionSummaryText.Text = $"Selected: {selectedNode.DisplayLabel}";
     }
@@ -1247,6 +1451,13 @@ public partial class MainWindow : Window
             if (forceRefreshFocusedFields || !BoundsYBox.IsKeyboardFocused) BoundsYBox.Text = Math.Round(node.Bounds[1]).ToString(CultureInfo.InvariantCulture);
             if (forceRefreshFocusedFields || !BoundsWBox.IsKeyboardFocused) BoundsWBox.Text = Math.Round(node.Bounds[2]).ToString(CultureInfo.InvariantCulture);
             if (forceRefreshFocusedFields || !BoundsHBox.IsKeyboardFocused) BoundsHBox.Text = Math.Round(node.Bounds[3]).ToString(CultureInfo.InvariantCulture);
+        }
+        else if (inFreeform && StudioCanvas.TryGetNodeLocalRefRect(node, out Rect localRef))
+        {
+            if (forceRefreshFocusedFields || !BoundsXBox.IsKeyboardFocused) BoundsXBox.Text = Math.Round(localRef.X).ToString(CultureInfo.InvariantCulture);
+            if (forceRefreshFocusedFields || !BoundsYBox.IsKeyboardFocused) BoundsYBox.Text = Math.Round(localRef.Y).ToString(CultureInfo.InvariantCulture);
+            if (forceRefreshFocusedFields || !BoundsWBox.IsKeyboardFocused) BoundsWBox.Text = Math.Round(localRef.Width).ToString(CultureInfo.InvariantCulture);
+            if (forceRefreshFocusedFields || !BoundsHBox.IsKeyboardFocused) BoundsHBox.Text = Math.Round(localRef.Height).ToString(CultureInfo.InvariantCulture);
         }
         else if (hasRect)
         {
@@ -1363,6 +1574,13 @@ public partial class MainWindow : Window
             e.AddedItems.OfType<PresetCatalog.TelemetrySensorOption>().FirstOrDefault()
             ?? (TelemetryKeyCombo.SelectedItem as PresetCatalog.TelemetrySensorOption);
         if (opt == null) return;
+        if (opt.IsHeader)
+        {
+            suppressEvents = true;
+            try { TelemetryKeyCombo.Text = selectedNode.TelemetryKey ?? ""; }
+            finally { suppressEvents = false; }
+            return;
+        }
 
         string chosenKey = opt.Key;
         suppressEvents = true;
@@ -1380,6 +1598,12 @@ public partial class MainWindow : Window
                 else if (string.IsNullOrWhiteSpace(TitleBox.Text))
                 {
                     TitleBox.Text = "{value}";
+                }
+                else if (selectedNode.Kind is "tile" or "action_pill"
+                         && !TitleBox.Text.Contains('{')
+                         && string.IsNullOrWhiteSpace(SubtitleBox.Text))
+                {
+                    SubtitleBox.Text = "{value}";
                 }
             }
         }
@@ -1405,7 +1629,24 @@ public partial class MainWindow : Window
 
     private void OnPresetSelected(object sender, SelectionChangedEventArgs e)
     {
-        if (suppressEvents || selectedNode == null || PresetCombo.SelectedItem is not ActionPresetOption opt || opt.IsHeader) return;
+        if (suppressEvents || selectedNode == null || PresetCombo.SelectedItem is not ActionPresetOption opt) return;
+        if (opt.IsHeader)
+        {
+            suppressEvents = true;
+            try { SelectMatchingPreset(selectedNode.Action ?? new ActionSpecModel()); }
+            finally { suppressEvents = false; }
+            return;
+        }
+        if (selectedNode.Action != null)
+        {
+            selectedNode.Action.ExtraKey = null;
+            selectedNode.Action.ExtraType = null;
+            selectedNode.Action.ExtraVal = null;
+            selectedNode.Action.ExtraIntKey = null;
+            selectedNode.Action.ExtraIntValue = null;
+            selectedNode.Action.FallbackPackage = null;
+            selectedNode.Action.FallbackClass = null;
+        }
         suppressEvents = true;
         try
         {
@@ -1421,6 +1662,15 @@ public partial class MainWindow : Window
                     SubtitleBox.Text = opt.DefaultSubtitle;
                 if (string.IsNullOrWhiteSpace(IconCombo.Text))
                     IconCombo.Text = opt.DefaultIcon;
+                if (!string.IsNullOrEmpty(opt.DefaultSensorKey) && string.IsNullOrWhiteSpace(TelemetryKeyCombo.Text))
+                {
+                    TelemetryKeyCombo.Text = opt.DefaultSensorKey;
+                    if (selectedNode.Kind is "tile" or "action_pill"
+                        && (string.IsNullOrWhiteSpace(SubtitleBox.Text) || SubtitleBox.Text == opt.DefaultSubtitle))
+                    {
+                        SubtitleBox.Text = "{value}";
+                    }
+                }
             }
         }
         finally
@@ -1495,6 +1745,7 @@ public partial class MainWindow : Window
         parent.Children[idx] = converted;
         parent.IsExpanded = true;
         BindWholePack(converted);
+        SaveAndRecordHistory();
         StatusFooterText.Text = $"Converted '{converted.Id}' into editable panel with individual child elements";
     }
 
@@ -1509,6 +1760,7 @@ public partial class MainWindow : Window
     private void OnCanvasPackMutated()
     {
         PopulateNodeInspector(selectedNode);
+        SaveAndRecordHistory();
         StatusFooterText.Text = "Updated bounds";
     }
 
@@ -1742,12 +1994,13 @@ public partial class MainWindow : Window
         currentPack.Background.PrimaryColor = BgPrimaryBox.Text.Trim();
         currentPack.Background.SecondaryColor = BgSecondaryBox.Text.Trim();
         currentPack.Background.AccentColor = BgAccentBox.Text.Trim();
-        currentPack.Background.DimColor = BgDimBox.Text.Trim();
+        string dimTrim = BgDimBox.Text.Trim();
+        currentPack.Background.DimColor = string.IsNullOrEmpty(dimTrim) ? "#00000000" : dimTrim;
 
         UpdateSimReadouts();
         UpdatePackHeaderLabel();
         StudioCanvas.RebuildScene();
-        workspace.SaveCurrentTheme(currentPack);
+        SaveAndRecordHistory();
         RefreshThemeSelectorCombo(workspace.WorkspaceDir);
     }
 
@@ -1775,11 +2028,20 @@ public partial class MainWindow : Window
             double defH = widget.Kind == "progress_bar" ? 28
                         : widget.Kind == "page_indicator" ? 44
                         : (widget.Kind is "icon" or "image" ? 96 : (widget.Layout == "pager" ? 420 : (widget.IsPanel ? 240 : 120)));
-            widget.Bounds = new double[] { 80 + panel.Children.Count * 24, 140 + panel.Children.Count * 18, defW, defH };
+            double pInnerW = StudioCanvas.TryGetPanelInnerRefRect(panel, out Rect pInner) ? pInner.Width : (currentPack.ReferenceWidth);
+            double pInnerH = StudioCanvas.TryGetPanelInnerRefRect(panel, out pInner) ? pInner.Height : (currentPack.ReferenceHeight);
+            defW = Math.Max(40, Math.Min(defW, Math.Max(40, pInnerW - 24)));
+            defH = Math.Max(28, Math.Min(defH, Math.Max(28, pInnerH - 24)));
+            double baseX = ReferenceEquals(panel, currentPack.Root) ? 80 : 24;
+            double baseY = ReferenceEquals(panel, currentPack.Root) ? 140 : 24;
+            double x = Math.Clamp(baseX + panel.Children.Count * 20, 0, Math.Max(0, pInnerW - defW));
+            double y = Math.Clamp(baseY + panel.Children.Count * 16, 0, Math.Max(0, pInnerH - defH));
+            widget.Bounds = new double[] { Math.Round(x), Math.Round(y), Math.Round(defW), Math.Round(defH) };
         }
         panel.Children.Add(widget);
         panel.IsExpanded = true;
         BindWholePack(widget);
+        SaveAndRecordHistory();
     }
 
     private void OnAddTextClick(object sender, RoutedEventArgs e) => AddWidgetToTargetPanel(new LayoutNodeModel
@@ -1878,6 +2140,7 @@ public partial class MainWindow : Window
         pager.Children.Add(page);
         StudioCanvas.SetPagerPageIndex(pager.Id, pager.Children.Count - 1);
         BindWholePack(page);
+        SaveAndRecordHistory();
     }
 
     private void OnAddPagerClick(object sender, RoutedEventArgs e)
@@ -2094,11 +2357,28 @@ public partial class MainWindow : Window
 
         if (string.Equals(targetPanel.Layout, "freeform", StringComparison.OrdinalIgnoreCase))
         {
-            if (node.Bounds is not { Length: >= 4 })
+            if (!ReferenceEquals(oldParent, targetPanel))
+            {
+                double w = Math.Max(20, prevRefRect?.Width > 10 ? Math.Round(prevRefRect.Value.Width)
+                         : (node.Bounds is { Length: >= 4 } ? Math.Round(node.Bounds[2]) : (node.Width ?? 320)));
+                double h = Math.Max(20, prevRefRect?.Height > 10 ? Math.Round(prevRefRect.Value.Height)
+                         : (node.Bounds is { Length: >= 4 } ? Math.Round(node.Bounds[3]) : (node.Height ?? 140)));
+                if (prevRefRect.HasValue && StudioCanvas.TryGetPanelInnerRefRect(targetPanel, out Rect dstInner))
+                {
+                    double relX = Math.Clamp(Math.Round(prevRefRect.Value.X - dstInner.X), 0, Math.Max(0, Math.Round(dstInner.Width - w)));
+                    double relY = Math.Clamp(Math.Round(prevRefRect.Value.Y - dstInner.Y), 0, Math.Max(0, Math.Round(dstInner.Height - h)));
+                    node.Bounds = new[] { relX, relY, w, h };
+                }
+                else if (node.Bounds is not { Length: >= 4 })
+                {
+                    node.Bounds = new[] { 24, 24, w, h };
+                }
+            }
+            else if (node.Bounds is not { Length: >= 4 })
             {
                 double w = prevRefRect?.Width > 10 ? Math.Round(prevRefRect.Value.Width) : (node.Width ?? 320);
                 double h = prevRefRect?.Height > 10 ? Math.Round(prevRefRect.Value.Height) : (node.Height ?? 140);
-                node.Bounds = new[] { 40, 40, Math.Max(40, w), Math.Max(40, h) };
+                node.Bounds = new[] { 24, 24, Math.Max(20, w), Math.Max(20, h) };
             }
         }
         else if (string.Equals(oldParent.Layout, "freeform", StringComparison.OrdinalIgnoreCase))
@@ -2217,7 +2497,7 @@ public partial class MainWindow : Window
 
         if (inFreeform)
         {
-            Rect fallbackRect = StudioCanvas.TryGetNodeRefRect(inner, out Rect r) ? r : new Rect(40, 40, inner.Width ?? 320, inner.Height ?? 140);
+            Rect fallbackRect = StudioCanvas.TryGetNodeLocalRefRect(inner, out Rect r) ? r : new Rect(24, 24, inner.Width ?? 320, inner.Height ?? 140);
             double[] b = inner.Bounds is { Length: >= 4 } ? inner.Bounds : new[] { fallbackRect.X, fallbackRect.Y, fallbackRect.Width, fallbackRect.Height };
             group.Bounds = new[] { b[0], b[1], b[2] + wrapPad * 2, b[3] + wrapPad * 2 };
             inner.Width ??= (int)Math.Round(b[2]);
@@ -2391,6 +2671,14 @@ public partial class MainWindow : Window
         parent.Children.RemoveAt(idx);
         parent.Children.Insert(dst, selectedNode);
         BindWholePack(selectedNode);
+        SaveAndRecordHistory();
+    }
+
+    private static void CollectAllNodeIds(LayoutNodeModel node, HashSet<string> ids)
+    {
+        if (!string.IsNullOrWhiteSpace(node.Id)) ids.Add(node.Id);
+        if (node.Children == null) return;
+        foreach (var ch in node.Children) CollectAllNodeIds(ch, ids);
     }
 
     private void OnDuplicateClick(object sender, RoutedEventArgs e)
@@ -2398,13 +2686,13 @@ public partial class MainWindow : Window
         if (selectedNode == null || selectedNode == currentPack.Root || selectedNode.VirtualOwnerPager != null) return;
         var parent = FindParent(currentPack.Root, selectedNode);
         if (parent?.Children == null) return;
-        string rawNodeJson = System.Text.Json.JsonSerializer.Serialize(selectedNode);
-        var dup = System.Text.Json.JsonSerializer.Deserialize<LayoutNodeModel>(rawNodeJson);
-        if (dup == null) return;
-        dup.Id += "_copy";
+        var existingIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        CollectAllNodeIds(currentPack.Root, existingIds);
+        var dup = selectedNode.DeepCloneWithFreshIds(existingIds);
         if (dup.Bounds is { Length: >= 4 }) { dup.Bounds[0] += 24; dup.Bounds[1] += 24; }
         parent.Children.Add(dup);
         BindWholePack(dup);
+        SaveAndRecordHistory();
     }
 
     private void OnDeleteClick(object sender, RoutedEventArgs e)
@@ -2424,6 +2712,7 @@ public partial class MainWindow : Window
             : parent;
         parent.IsExpanded = true;
         BindWholePack(nextFocus);
+        SaveAndRecordHistory();
     }
 
     private void OnImportFontClick(object sender, RoutedEventArgs e)
@@ -2488,6 +2777,7 @@ public partial class MainWindow : Window
             currentPack.Background.Type = "bitmap";
             currentPack.Background.BitmapAsset = rel;
             BindWholePack(selectedNode);
+            SaveAndRecordHistory();
             StatusFooterText.Text = $"Imported static wallpaper: {rel}";
         }
         catch (Exception ex) { MessageBox.Show(ex.Message, "Wallpaper Error"); }
@@ -2518,6 +2808,7 @@ public partial class MainWindow : Window
             currentPack.Background.FramesDir = res.RelativeRef;
             currentPack.Background.Fps = res.Fps;
             BindWholePack(selectedNode);
+            SaveAndRecordHistory();
             ConversionProgressText.Text = $"Converted {res.FrameCount} frames ({res.TotalBytes / 1024} KB) via {res.Method}";
             StatusFooterText.Text = $"Wallpaper animated sequence ready: {res.RelativeRef}";
         }
@@ -2590,6 +2881,7 @@ public partial class MainWindow : Window
             : workspace.AddThemeToCurrentPack(newPack);
         currentPack = newPack;
         hasActiveTheme = true;
+        ResetUndoHistory();
         ApplyWorkspaceActiveState();
         RefreshIconsDropdown();
         RefreshFontsDropdown();
@@ -2617,6 +2909,7 @@ public partial class MainWindow : Window
             workspace.SaveCurrentTheme(currentPack);
             currentPack = workspace.SwitchToThemeDirectory(entry.Directory);
             currentPack.Normalize();
+            ResetUndoHistory();
             RefreshIconsDropdown();
             RefreshFontsDropdown();
             BindWholePack(currentPack.Root);
@@ -2730,6 +3023,7 @@ public partial class MainWindow : Window
             currentPack = workspace.SwitchToThemeDirectory(dlg.InstalledThemeDir);
             currentPack.Normalize();
             hasActiveTheme = true;
+            ResetUndoHistory();
             ApplyWorkspaceActiveState();
             RefreshIconsDropdown();
             RefreshFontsDropdown();
@@ -2910,7 +3204,9 @@ public partial class MainWindow : Window
         string raw = box.Text?.Trim() ?? "";
         int dash = raw.IndexOf(" \u2014 ", StringComparison.Ordinal);
         if (dash >= 0) return raw[..dash].Trim();
-        if (raw.StartsWith("(None", StringComparison.OrdinalIgnoreCase)) return "";
+        if (raw.StartsWith("(None", StringComparison.OrdinalIgnoreCase)
+            || raw.StartsWith("\u2500", StringComparison.Ordinal))
+            return "";
         return raw;
     }
 
@@ -3881,10 +4177,13 @@ public partial class MainWindow : Window
                 throw new InvalidOperationException($"Element switch back to elemA failed to update Width/Height fields (got {WidthBox.Text}x{HeightBox.Text}).");
 
             // Verify selecting a sensor from TelemetryKeyCombo keeps the key text populated instead of blanking out
-            TelemetryKeyCombo.SelectedItem = PresetCatalog.TelemetrySensors[1];
+            TelemetryKeyCombo.SelectedItem = PresetCatalog.TelemetrySensors.First(s => !s.IsHeader && s.Key == "hv.soc");
             Dispatcher.Invoke(System.Windows.Threading.DispatcherPriority.Background, new Action(() => { }));
             if (TelemetryKeyCombo.Text != "hv.soc" || elemA.TelemetryKey != "hv.soc")
                 throw new InvalidOperationException($"TelemetryKeyCombo failed to retain selected sensor text (text='{TelemetryKeyCombo.Text}', node='{elemA.TelemetryKey}').");
+            if (PresetCatalog.TelemetrySensors.Count(s => s.IsHeader) < 6
+                || PresetCatalog.TelemetrySensors[0].IsHeader)
+                throw new InvalidOperationException("TelemetrySensors missing category headers or (None) entry at index 0.");
             if (!PresetCatalog.ActionPresets.Any(p => !p.IsHeader && p.ActionType == "preset" && p.Cmd == "seat_popup")
                 || PresetCatalog.ActionPresets.Count(p => p.IsHeader) < 7
                 || PresetCatalog.ActionPresets[0].IsHeader
@@ -3965,6 +4264,218 @@ public partial class MainWindow : Window
             PopulateNodeInspector(p2Tile, forceRefreshFocusedFields: true);
             if (StudioCanvas.GetPagerPageIndex("hidden_bar_pager") != 1 || !StudioCanvas.TryGetNodeRefRect(p2Tile, out _))
                 throw new InvalidOperationException("Selecting a child on offscreen page 2 did not switch pager preview to page 1.");
+
+            // Verify ActionClsBox preserves OEM activity class names containing 'android.' (e.g. com.android.vehiclesettings.VehicleSetting)
+            BindWholePack(p1Tile);
+            ActionTypeBox.Text = "launch";
+            ActionPkgBox.Text = "com.android.vehiclesettings";
+            ActionClsBox.Text = "com.android.vehiclesettings.VehicleSetting";
+            CommitInspectorToSelectedNode();
+            if (p1Tile.Action?.Class != "com.android.vehiclesettings.VehicleSetting" || p1Tile.Action?.IntentAction != null)
+                throw new InvalidOperationException("ActionClsBox misclassified OEM Activity class as IntentAction.");
+
+            ActionTypeBox.Text = "broadcast";
+            ActionClsBox.Text = "com.hkmc.intent.action.CLIMATE_POPUP";
+            CommitInspectorToSelectedNode();
+            if (p1Tile.Action?.IntentAction != "com.hkmc.intent.action.CLIMATE_POPUP" || p1Tile.Action?.Class != null)
+                throw new InvalidOperationException("ActionClsBox failed to store broadcast action in IntentAction.");
+
+            // Verify unedited token-backed style fields (CornerRadiusPx / AccentColor) are not baked onto node.Style when editing Title
+            currentPack.Tokens.CornerRadiusPx = 30;
+            currentPack.Tokens.AccentColor = "#FF10B981";
+            var tokenTile = new LayoutNodeModel { Id = "tok_tile", Kind = "tile", Title = "Before" };
+            hiddenBarPager.Children[0].Children!.Add(tokenTile);
+            BindWholePack(tokenTile);
+            TitleBox.Text = "After";
+            CommitInspectorToSelectedNode();
+            if (tokenTile.Style?.CornerRadiusPx != null || tokenTile.Style?.AccentColor != null)
+                throw new InvalidOperationException("Editing Title unexpectedly baked CornerRadiusPx/AccentColor overrides over theme tokens.");
+
+            // Verify Duplicate assigns unique IDs to both panel and descendant children
+            OnCanvasNodeSelected(hiddenBarPager.Children[0]);
+            OnDuplicateClick(this, new RoutedEventArgs());
+            var dupPage = hiddenBarPager.Children.Last();
+            if (dupPage.Id == "hb_page1" || dupPage.Children!.Any(c => c.Id == "hb_p1_tile" || c.Id == "tok_tile"))
+                throw new InvalidOperationException("OnDuplicateClick left duplicate child IDs inside cloned panel.");
+
+            // Verify StageThemeFolderIntoCurrentPack never points WorkspaceDir at the imported theme (both when promoting single-theme -> pack and inside an existing pack)
+            string stageSrcDir = Path.Combine(storeTestRoot, "stage_import_src");
+            Directory.CreateDirectory(stageSrcDir);
+            var stageImportedPack = PresetCatalog.CreateNewPack("imported-distinct", "Imported Distinct Theme", "Tester", "blank_freeform", true);
+            File.WriteAllText(Path.Combine(stageSrcDir, "layout.json"), stageImportedPack.ToJsonString());
+            var stagedEntry = workspace.StageThemeFolderIntoCurrentPack(stageSrcDir);
+            if (string.Equals(workspace.WorkspaceDir, stagedEntry.Directory, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("StageThemeFolderIntoCurrentPack pointed active WorkspaceDir at imported theme!");
+            string wsMultiBefore = workspace.WorkspaceDir;
+            var stagedEntry2 = workspace.StageThemeFolderIntoCurrentPack(stageSrcDir);
+            if (!string.Equals(workspace.WorkspaceDir, wsMultiBefore, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(workspace.WorkspaceDir, stagedEntry2.Directory, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("StageThemeFolderIntoCurrentPack mutated multi-theme WorkspaceDir!");
+            workspace.SaveCurrentTheme(currentPack);
+            var reloadedStaged = ThemePackModel.FromJson(File.ReadAllText(Path.Combine(stagedEntry.Directory, "layout.json")));
+            var reloadedStaged2 = ThemePackModel.FromJson(File.ReadAllText(Path.Combine(stagedEntry2.Directory, "layout.json")));
+            if (reloadedStaged.Name != "Imported Distinct Theme" || reloadedStaged2.Name != "Imported Distinct Theme")
+                throw new InvalidOperationException("SaveCurrentTheme overwrote staged imported theme!");
+
+            // Verify InsetsJsonConverter (scalar + 2-int) & top-level 'pages' & legacy style/action aliases
+            const string compatJson = """
+            {
+              "formatVersion": 2,
+              "id": "compat-check",
+              "name": "Compat Check",
+              "pages": [
+                {
+                  "id": "pg1",
+                  "type": "panel",
+                  "layout": "grid",
+                  "paddingPx": 20,
+                  "children": [
+                    {
+                      "id": "t1",
+                      "kind": "tile",
+                      "marginPx": [12, 8],
+                      "style": { "gradientEndColor": "#FF112233", "fontSizePx": 28 },
+                      "action": { "type": "launch", "pkg": "com.example.car", "cls": "com.example.car.Main" }
+                    }
+                  ]
+                }
+              ]
+            }
+            """;
+            var compatPack = ThemePackModel.FromJson(compatJson);
+            var compatPage = compatPack.Root.Children![0];
+            var compatTile = compatPage.Children![0];
+            if (compatPack.Root.Layout != "pager"
+                || compatPage.PaddingPx is not { Length: 4 } || compatPage.PaddingPx[0] != 20 || compatPage.PaddingPx[3] != 20
+                || compatTile.MarginPx is not { Length: 4 } || compatTile.MarginPx[0] != 12 || compatTile.MarginPx[1] != 8 || compatTile.MarginPx[2] != 12
+                || compatTile.Style?.BgEndColor != "#FF112233" || compatTile.Style?.TitleSizePx != 28
+                || compatTile.Action?.Package != "com.example.car" || compatTile.Action?.Class != "com.example.car.Main")
+                throw new InvalidOperationException("ThemePackModel legacy/v2 schema compatibility normalization failed.");
+
+            // Verify AI Theme Context Builder stays 100% synchronized with PresetCatalog & ThemePackageService validator
+            string aiPrompt = AiThemeContextBuilder.BuildPrompt(currentPack, includeActiveThemeJson: true);
+            if (!aiPrompt.Contains($"v{PresetCatalog.StudioVersion}", StringComparison.Ordinal)
+                || !aiPrompt.Contains("animated_frames", StringComparison.Ordinal)
+                || !aiPrompt.Contains("frames.json", StringComparison.Ordinal)
+                || !aiPrompt.Contains("bgAnimAsset", StringComparison.Ordinal))
+                throw new InvalidOperationException("AiThemeContextBuilder missing version or animated background instructions.");
+            foreach (string kindName in PresetCatalog.WidgetKinds)
+            {
+                if (!aiPrompt.Contains($"\"{kindName}\"", StringComparison.Ordinal))
+                    throw new InvalidOperationException($"AiThemeContextBuilder out of sync: missing widget kind '{kindName}'.");
+            }
+            foreach (string bgType in PresetCatalog.BackgroundTypes)
+            {
+                if (!aiPrompt.Contains($"\"{bgType}\"", StringComparison.Ordinal))
+                    throw new InvalidOperationException($"AiThemeContextBuilder out of sync: missing background type '{bgType}'.");
+            }
+            foreach (string iconPath in PresetCatalog.BuiltInIcons)
+            {
+                if (!aiPrompt.Contains($"\"{iconPath}\"", StringComparison.Ordinal))
+                    throw new InvalidOperationException($"AiThemeContextBuilder out of sync: missing built-in icon '{iconPath}'.");
+            }
+            foreach (var sensor in PresetCatalog.TelemetrySensors.Where(s => !s.IsHeader && !string.IsNullOrEmpty(s.Key)))
+            {
+                if (!aiPrompt.Contains($"`{sensor.Key}`", StringComparison.Ordinal))
+                    throw new InvalidOperationException($"AiThemeContextBuilder out of sync: missing telemetry key '{sensor.Key}'.");
+            }
+            foreach (var act in PresetCatalog.ActionPresets.Where(p => !p.IsHeader && p.ActionType != "none"))
+            {
+                string expectedToken = string.IsNullOrEmpty(act.Cmd) ? $"\"type\": \"{act.ActionType}\"" : $"\"cmd\": \"{act.Cmd}\"";
+                if (!aiPrompt.Contains(expectedToken, StringComparison.Ordinal))
+                    throw new InvalidOperationException($"AiThemeContextBuilder out of sync: missing action preset '{act.Display}'.");
+            }
+            string aiExampleJson = AiThemeContextBuilder.ExtractEmbeddedExampleJson(aiPrompt);
+            var aiExampleModel = ThemePackModel.FromJson(aiExampleJson);
+            string aiExampleDir = Path.Combine(storeTestRoot, "ai_example_theme");
+            Directory.CreateDirectory(aiExampleDir);
+            File.WriteAllText(Path.Combine(aiExampleDir, "layout.json"), aiExampleModel.ToJsonString());
+            var aiAudit = ThemePackageService.AuditWorkspaceTheme(aiExampleModel, aiExampleDir);
+            if (aiAudit.Errors.Count > 0)
+                throw new InvalidOperationException("AiThemeContextBuilder example JSON failed AuditWorkspaceTheme: " + string.Join("; ", aiAudit.Errors));
+            var aiDlg = new AiContextDialog(currentPack);
+            aiDlg.Close();
+
+            // Verify nested [freeform] panel click, drag, resize, inspector commit, & grid->freeform conversion NEVER add parent X/Y offset
+            currentPack.Tokens.ShowSystemBar = true; // exercises scaleY = 0.875 too
+            var nestedFreeformHost = new LayoutNodeModel
+            {
+                Id = "ff_host_freeform",
+                Type = "panel",
+                Layout = "freeform",
+                Width = 1920,
+                Height = 680,
+                Children = new List<LayoutNodeModel>
+                {
+                    new()
+                    {
+                        Id = "sys_b",
+                        Type = "panel",
+                        Layout = "freeform",
+                        Bounds = new double[] { 646, 50, 620, 540 },
+                        PaddingPx = new[] { 10, 12, 10, 12 }, // inner origin = (656, 62) in ref space
+                        Children = new List<LayoutNodeModel>
+                        {
+                            new() { Id = "sys_b_item1", Kind = "tile", Title = "Item 1", Bounds = new double[] { 64, 20, 200, 80 } },
+                            new() { Id = "sys_b_unbounded", Kind = "tile", Title = "Unbounded" }
+                        }
+                    },
+                    new()
+                    {
+                        Id = "sys_grid_to_ff",
+                        Type = "panel",
+                        Layout = "grid",
+                        Columns = 2,
+                        Rows = 1,
+                        GapPx = 10,
+                        Bounds = new double[] { 646, 600, 600, 70 },
+                        Children = new List<LayoutNodeModel>
+                        {
+                            new() { Id = "g2f_a", Kind = "tile", Title = "A" },
+                            new() { Id = "g2f_b", Kind = "tile", Title = "B" }
+                        }
+                    }
+                }
+            };
+            currentPack.Root.Children.Add(nestedFreeformHost);
+            var sysB = nestedFreeformHost.Children[0];
+            var sysBItem1 = sysB.Children![0];
+            var sysBUnbounded = sysB.Children![1];
+            BindWholePack(sysBItem1);
+
+            // 1) Pure click (0,0) and 1px jitter inside nested freeform must NOT mutate Bounds or add parent (656,62) offset
+            if (StudioCanvas.SimulateFreeformInteractionForTest(sysBItem1, 0, 0, 0)
+                || StudioCanvas.SimulateFreeformInteractionForTest(sysBItem1, 0, 1.5, -1.5))
+                throw new InvalidOperationException("Click / sub-deadzone jitter inside freeform unexpectedly reported mutation.");
+            if (sysBItem1.Bounds![0] != 64 || sysBItem1.Bounds[1] != 20)
+                throw new InvalidOperationException($"Clicking nested freeform child corrupted Bounds to [{sysBItem1.Bounds[0]}, {sysBItem1.Bounds[1]}]!");
+
+            // 2) Dragging (+30 stage px X, +21 stage px Y -> +30 ref X, +24 ref Y at scaleY=0.875) keeps parent-inner-relative coordinates
+            if (!StudioCanvas.SimulateFreeformInteractionForTest(sysBItem1, 0, 30.0, 21.0))
+                throw new InvalidOperationException("Expected freeform drag >= deadzone to mutate Bounds.");
+            if (Math.Abs(sysBItem1.Bounds[0] - 94) > 1 || Math.Abs(sysBItem1.Bounds[1] - 44) > 1)
+                throw new InvalidOperationException($"Dragging nested freeform child produced wrong Bounds [{sysBItem1.Bounds[0]}, {sysBItem1.Bounds[1]}] (expected ~[94, 44]).");
+
+            // 3) Resizing (+40 stage px X, +17.5 stage px Y -> +40 ref W, +20 ref H)
+            if (!StudioCanvas.SimulateFreeformInteractionForTest(sysBItem1, 1, 40.0, 17.5))
+                throw new InvalidOperationException("Expected freeform resize to mutate Bounds.");
+            if (Math.Abs(sysBItem1.Bounds[2] - 240) > 1 || Math.Abs(sysBItem1.Bounds[3] - 100) > 1)
+                throw new InvalidOperationException($"Resizing nested freeform child produced wrong size [{sysBItem1.Bounds[2]}x{sysBItem1.Bounds[3]}].");
+
+            // 4) Selecting & editing a child with null Bounds inside nested freeform uses local parent-inner coords (40,40), NEVER root (696,102)
+            BindWholePack(sysBUnbounded);
+            TitleBox.Text = "Unbounded Edited";
+            CommitInspectorToSelectedNode();
+            if (sysBUnbounded.Bounds == null || Math.Abs(sysBUnbounded.Bounds[0] - 40) > 2 || Math.Abs(sysBUnbounded.Bounds[1] - 40) > 2)
+                throw new InvalidOperationException($"Inspector commit on nested freeform child with null Bounds corrupted X/Y to [{sysBUnbounded.Bounds?[0]}, {sysBUnbounded.Bounds?[1]}]!");
+
+            // 5) Converting a nested [grid] panel at X=646 to [freeform] materializes local child Bounds (< 600), NEVER root (>= 646)
+            var sysGridToFf = nestedFreeformHost.Children[1];
+            BindWholePack(sysGridToFf);
+            NodeTypeCombo.SelectedItem = "freeform";
+            if (sysGridToFf.Children![0].Bounds is not { Length: >= 4 } bA || sysGridToFf.Children[1].Bounds is not { Length: >= 4 } bB
+                || bA[0] > 5 || bB[0] < 280 || bB[0] > 320)
+                throw new InvalidOperationException($"Converting nested grid->freeform materialized wrong child X bounds: A={sysGridToFf.Children[0].Bounds?[0]}, B={sysGridToFf.Children[1].Bounds?[0]}");
         }
         finally
         {

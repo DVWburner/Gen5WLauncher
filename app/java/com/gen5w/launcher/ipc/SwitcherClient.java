@@ -10,7 +10,9 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.Closeable;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.util.ArrayList;
@@ -19,6 +21,15 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.RejectedExecutionHandler;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * IPC client talking to root HomeSwitcher service via abstract LocalSocket @gen5w_launcher_ctl.
@@ -121,25 +132,90 @@ public final class SwitcherClient {
         void onResult(boolean ok, String message);
     }
 
+    private static final int FAST_TIMEOUT_MS = 1200;
+    private static final int CMD_TIMEOUT_MS = 2200;
+
+    private interface RejectAwareTask extends Runnable {
+        void onRejected();
+    }
+
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
+    private static final AtomicBoolean STATUS_IN_FLIGHT = new AtomicBoolean(false);
+    private static final ExecutorService STATUS_EXECUTOR = Executors.newSingleThreadExecutor(
+            new DaemonThreadFactory("switcher-status-"));
+    private static final ExecutorService CMD_EXECUTOR = new ThreadPoolExecutor(
+            1, 4, 30L, TimeUnit.SECONDS,
+            new LinkedBlockingQueue<Runnable>(48),
+            new DaemonThreadFactory("switcher-cmd-"),
+            new RejectedExecutionHandler() {
+                @Override
+                public void rejectedExecution(Runnable r, ThreadPoolExecutor executor) {
+                    if (r instanceof RejectAwareTask) {
+                        ((RejectAwareTask) r).onRejected();
+                    }
+                }
+            });
+
+    private static final class DaemonThreadFactory implements ThreadFactory {
+        private final String prefix;
+        private final AtomicInteger seq = new AtomicInteger(1);
+
+        DaemonThreadFactory(String prefix) {
+            this.prefix = prefix;
+        }
+
+        @Override
+        public Thread newThread(Runnable r) {
+            Thread t = new Thread(r, prefix + seq.getAndIncrement());
+            t.setDaemon(true);
+            return t;
+        }
+    }
 
     public static void sendAsync(final String command, final Callback callback) {
-        Thread t = new Thread(new Runnable() {
+        final boolean isStatusPoll = command == null || "STATUS".equals(command);
+        if (isStatusPoll && !STATUS_IN_FLIGHT.compareAndSet(false, true)) {
+            return;
+        }
+        ExecutorService exec = isStatusPoll ? STATUS_EXECUTOR : CMD_EXECUTOR;
+        exec.execute(new RejectAwareTask() {
             @Override
             public void run() {
-                final Status st = sendBlocking(command);
+                try {
+                    final Status st = sendBlocking(command);
+                    if (callback != null) {
+                        MAIN.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                callback.onResult(st);
+                            }
+                        });
+                    }
+                } finally {
+                    if (isStatusPoll) {
+                        STATUS_IN_FLIGHT.set(false);
+                    }
+                }
+            }
+
+            @Override
+            public void onRejected() {
+                if (isStatusPoll) {
+                    STATUS_IN_FLIGHT.set(false);
+                }
                 if (callback != null) {
                     MAIN.post(new Runnable() {
                         @Override
                         public void run() {
+                            Status st = new Status();
+                            st.ok = false;
+                            st.message = "Command queue busy";
                             callback.onResult(st);
                         }
                     });
                 }
             }
-        }, "switcher-ipc");
-        t.setDaemon(true);
-        t.start();
+        });
     }
 
     public static void runRootAmAsync(
@@ -153,13 +229,28 @@ public final class SwitcherClient {
             final SimpleCallback callback) {
         final String wire = "ROOT_AM|" + safe(mode) + "|" + safe(pkg) + "|" + safe(cls)
                 + "|" + safe(action) + "|" + safe(extraKey) + "|" + safe(extraType) + "|" + safe(extraVal);
-        Thread t = new Thread(new Runnable() {
+        sendSimpleWireAsync(wire, CMD_TIMEOUT_MS, callback);
+    }
+
+    public static void sendCarCommandAsync(
+            final String cmd,
+            final String arg,
+            final SimpleCallback callback) {
+        final String wire = "CAR_CMD|" + safe(cmd) + "|" + safe(arg);
+        sendSimpleWireAsync(wire, CMD_TIMEOUT_MS, callback);
+    }
+
+    private static void sendSimpleWireAsync(
+            final String wire,
+            final int timeoutMs,
+            final SimpleCallback callback) {
+        CMD_EXECUTOR.execute(new RejectAwareTask() {
             @Override
             public void run() {
                 boolean ok = false;
                 String msg;
                 try {
-                    String line = sendRawCommandBlocking(wire);
+                    String line = sendRawCommandBlocking(wire, timeoutMs);
                     JSONObject j = new JSONObject(line);
                     ok = j.optBoolean("ok", false);
                     msg = j.optString("message", ok ? "ok" : "failed");
@@ -177,9 +268,19 @@ public final class SwitcherClient {
                     });
                 }
             }
-        }, "switcher-root-am");
-        t.setDaemon(true);
-        t.start();
+
+            @Override
+            public void onRejected() {
+                if (callback != null) {
+                    MAIN.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            callback.onResult(false, "Busy: too many commands queued");
+                        }
+                    });
+                }
+            }
+        });
     }
 
     private static String safe(String s) {
@@ -188,14 +289,12 @@ public final class SwitcherClient {
 
     public static void setVehicleKeysAsync(final Collection<String> keys) {
         final String wire = buildSetKeysWire(keys);
-        Thread t = new Thread(new Runnable() {
+        CMD_EXECUTOR.execute(new Runnable() {
             @Override
             public void run() {
                 setVehicleKeysWireBlocking(wire);
             }
-        }, "switcher-set-keys");
-        t.setDaemon(true);
-        t.start();
+        });
     }
 
     public static boolean setVehicleKeysBlocking(Collection<String> keys) {
@@ -282,24 +381,44 @@ public final class SwitcherClient {
     }
 
     private static String sendRawCommandBlocking(String command) throws IOException {
+        return sendRawCommandBlocking(command, FAST_TIMEOUT_MS);
+    }
+
+    private static String sendRawCommandBlocking(String command, int timeoutMs) throws IOException {
         LocalSocket socket = new LocalSocket();
+        OutputStream out = null;
+        InputStream in = null;
+        BufferedReader reader = null;
         try {
             socket.connect(new LocalSocketAddress(SOCKET_NAME, LocalSocketAddress.Namespace.ABSTRACT));
-            socket.setSoTimeout(3000);
-            OutputStream out = socket.getOutputStream();
+            socket.setSoTimeout(Math.max(500, timeoutMs));
+            out = socket.getOutputStream();
             out.write((command + "\n").getBytes("UTF-8"));
             out.flush();
 
-            BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), "UTF-8"));
+            in = socket.getInputStream();
+            reader = new BufferedReader(new InputStreamReader(in, "UTF-8"));
             String line = reader.readLine();
             if (line == null || line.trim().isEmpty()) {
                 throw new IOException("Empty reply from home-switcher");
             }
             return line;
         } finally {
+            closeQuietly(out);
+            closeQuietly(reader);
+            closeQuietly(in);
             try {
                 socket.close();
-            } catch (IOException ignored) {
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    private static void closeQuietly(Closeable c) {
+        if (c != null) {
+            try {
+                c.close();
+            } catch (Throwable ignored) {
             }
         }
     }

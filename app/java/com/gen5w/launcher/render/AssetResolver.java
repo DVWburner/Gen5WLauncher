@@ -7,6 +7,7 @@ import android.graphics.BitmapFactory;
 import android.graphics.Typeface;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
+import android.util.LruCache;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -27,6 +28,10 @@ import java.util.Map;
  */
 public final class AssetResolver {
     private static final String DEFAULT_ASSET_BASE = "packs/default";
+    private static final int MAX_ASSET_READ_BYTES = 24 * 1024 * 1024;
+    private static final int MAX_BITMAP_WIDTH = 1920;
+    private static final int MAX_BITMAP_HEIGHT = 1080;
+    private static final LruCache<String, Typeface> GLOBAL_FONT_CACHE = new LruCache<String, Typeface>(24);
 
     private final Context context;
     private final String packBaseDir;
@@ -46,9 +51,7 @@ public final class AssetResolver {
         String key = ref.trim();
         if (drawableCache.containsKey(key)) {
             Drawable cached = drawableCache.get(key);
-            return cached == null || cached.getConstantState() == null
-                    ? cached
-                    : cached.getConstantState().newDrawable(context.getResources());
+            return cloneDrawable(cached);
         }
         Drawable result = null;
         try {
@@ -57,7 +60,7 @@ public final class AssetResolver {
                 if (key.toLowerCase(Locale.US).endsWith(".svg")) {
                     result = MiniSvgDrawable.parse(new String(data, "UTF-8"));
                 } else {
-                    Bitmap bmp = BitmapFactory.decodeByteArray(data, 0, data.length);
+                    Bitmap bmp = decodeBitmapBounded(data, MAX_BITMAP_WIDTH, MAX_BITMAP_HEIGHT);
                     if (bmp != null) {
                         result = new BitmapDrawable(context.getResources(), bmp);
                     }
@@ -67,7 +70,15 @@ public final class AssetResolver {
             System.err.println("[Gen5WLauncher] failed loading drawable " + key + ": " + t);
         }
         drawableCache.put(key, result);
-        return result;
+        return cloneDrawable(result);
+    }
+
+    private Drawable cloneDrawable(Drawable d) {
+        if (d == null) {
+            return null;
+        }
+        Drawable.ConstantState cs = d.getConstantState();
+        return cs != null ? cs.newDrawable(context.getResources()) : d;
     }
 
     public Bitmap loadBitmap(String ref) {
@@ -82,12 +93,31 @@ public final class AssetResolver {
         try {
             byte[] data = readAssetBytes(key);
             if (data != null && data.length > 0) {
-                bmp = BitmapFactory.decodeByteArray(data, 0, data.length);
+                bmp = decodeBitmapBounded(data, MAX_BITMAP_WIDTH, MAX_BITMAP_HEIGHT);
             }
         } catch (Throwable ignored) {
         }
         bitmapCache.put(key, bmp);
         return bmp;
+    }
+
+    public static Bitmap decodeBitmapBounded(byte[] data, int maxW, int maxH) {
+        if (data == null || data.length == 0) {
+            return null;
+        }
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeByteArray(data, 0, data.length, bounds);
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            return null;
+        }
+        int sample = 1;
+        while ((bounds.outWidth / sample) > maxW || (bounds.outHeight / sample) > maxH) {
+            sample *= 2;
+        }
+        BitmapFactory.Options opts = new BitmapFactory.Options();
+        opts.inSampleSize = sample;
+        return BitmapFactory.decodeByteArray(data, 0, data.length, opts);
     }
 
     public Typeface loadTypeface(String fontFamily, boolean bold, boolean italic) {
@@ -108,12 +138,25 @@ public final class AssetResolver {
         if ((low.endsWith(".ttf") || low.endsWith(".otf")) && !fam.contains("..")) {
             try {
                 File ext = resolveExternalFile(fam);
-                Typeface base = null;
-                if (ext != null && ext.isFile()) {
-                    base = Typeface.createFromFile(ext);
-                } else {
-                    String assetPath = fam.startsWith("packs/") ? fam : (DEFAULT_ASSET_BASE + "/" + fam);
-                    base = Typeface.createFromAsset(context.getAssets(), assetPath);
+                String assetPath = fam.startsWith("packs/") ? fam : (DEFAULT_ASSET_BASE + "/" + fam);
+                String globalKey = (ext != null && ext.isFile())
+                        ? ("file:" + ext.getAbsolutePath() + "@" + ext.lastModified())
+                        : ("asset:" + assetPath);
+                Typeface base;
+                synchronized (GLOBAL_FONT_CACHE) {
+                    base = GLOBAL_FONT_CACHE.get(globalKey);
+                }
+                if (base == null) {
+                    if (ext != null && ext.isFile()) {
+                        base = Typeface.createFromFile(ext);
+                    } else {
+                        base = Typeface.createFromAsset(context.getAssets(), assetPath);
+                    }
+                    if (base != null) {
+                        synchronized (GLOBAL_FONT_CACHE) {
+                            GLOBAL_FONT_CACHE.put(globalKey, base);
+                        }
+                    }
                 }
                 if (base != null) {
                     result = style == Typeface.NORMAL ? base : Typeface.create(base, style);
@@ -232,8 +275,13 @@ public final class AssetResolver {
         try {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             byte[] buf = new byte[8192];
+            int total = 0;
             int n;
             while ((n = in.read(buf)) > 0) {
+                total += n;
+                if (total > MAX_ASSET_READ_BYTES) {
+                    throw new IOException("Asset exceeds maximum size limit (" + MAX_ASSET_READ_BYTES + " bytes)");
+                }
                 out.write(buf, 0, n);
             }
             return out.toByteArray();

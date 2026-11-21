@@ -81,12 +81,21 @@ public sealed class MediaConverterService
         string ext = Path.GetExtension(srcFilePath).ToLowerInvariant();
         if (ext is not (".ttf" or ".otf"))
             throw new InvalidOperationException("Please select a .ttf or .otf font file.");
-        // Validate readable font before copying
-        _ = new GlyphTypeface(new Uri(srcFilePath));
+        byte[] fontBytes = File.ReadAllBytes(srcFilePath);
+        string hash = ThemePackageService.ComputeSha256Hex(fontBytes)[..16];
+        string tempFontDir = Path.Combine(Path.GetTempPath(), "Gen5WStudioFontCache", hash);
+        Directory.CreateDirectory(tempFontDir);
+        string probePath = Path.Combine(tempFontDir, Path.GetFileName(srcFilePath));
+        if (!File.Exists(probePath))
+        {
+            File.WriteAllBytes(probePath, fontBytes);
+        }
+        // Validate readable font from temp cache copy so WPF never locks srcFilePath or workspace font
+        _ = new GlyphTypeface(new Uri(probePath));
         string fontsDir = Path.Combine(workspaceDir, "fonts");
         Directory.CreateDirectory(fontsDir);
         string safeName = PackWorkspaceService.SanitizeId(Path.GetFileNameWithoutExtension(srcFilePath)) + ext;
-        File.Copy(srcFilePath, Path.Combine(fontsDir, safeName), overwrite: true);
+        File.WriteAllBytes(Path.Combine(fontsDir, safeName), fontBytes);
         return "fonts/" + safeName;
     }
 

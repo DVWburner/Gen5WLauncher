@@ -366,7 +366,7 @@ public final class ThemeStoreClient {
             conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
             conn.setReadTimeout(READ_TIMEOUT_MS);
             conn.setRequestProperty("Accept", "application/json, */*");
-            conn.setRequestProperty("User-Agent", "Gen5WLauncher/0.3.5 (Android 4.4.2; Gen5W)");
+            conn.setRequestProperty("User-Agent", "Gen5WLauncher/0.4.3 (Android 4.4.2; Gen5W)");
             StoreTlsHelper.configure(conn);
             int code = conn.getResponseCode();
             if (code == HttpURLConnection.HTTP_MOVED_PERM

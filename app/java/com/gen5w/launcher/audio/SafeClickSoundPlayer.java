@@ -20,6 +20,7 @@ public final class SafeClickSoundPlayer {
     public static final String MODE_SOFT = "soft";
     public static final String MODE_OFF = "off";
 
+    private final Context appContext;
     private final AudioManager audioManager;
     private SoundPool soundPool;
     private int softClickSoundId = 0;
@@ -27,8 +28,8 @@ public final class SafeClickSoundPlayer {
     private volatile String mode = MODE_SYSTEM;
 
     public SafeClickSoundPlayer(Context context) {
-        this.audioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
-        initSoftSynthSound(context);
+        this.appContext = context.getApplicationContext();
+        this.audioManager = (AudioManager) this.appContext.getSystemService(Context.AUDIO_SERVICE);
     }
 
     public String getMode() {
@@ -41,11 +42,17 @@ public final class SafeClickSoundPlayer {
         } else {
             this.mode = MODE_SYSTEM;
         }
+        if (MODE_SOFT.equals(this.mode) && soundPool == null) {
+            initSoftSynthSound(appContext);
+        }
     }
 
     public String cycleMode() {
         if (MODE_SYSTEM.equals(mode)) {
             mode = MODE_SOFT;
+            if (soundPool == null) {
+                initSoftSynthSound(appContext);
+            }
         } else if (MODE_SOFT.equals(mode)) {
             mode = MODE_OFF;
         } else {
@@ -152,12 +159,23 @@ public final class SafeClickSoundPlayer {
             putShortLE(buf, 44 + i * 2, s);
         }
 
-        FileOutputStream fos = new FileOutputStream(outFile);
+        File tmp = new File(outFile.getParentFile(), outFile.getName() + "." + System.nanoTime() + ".tmp");
+        FileOutputStream fos = new FileOutputStream(tmp);
         try {
             fos.write(buf);
             fos.flush();
         } finally {
             fos.close();
+        }
+        if (!tmp.renameTo(outFile)) {
+            FileOutputStream direct = new FileOutputStream(outFile);
+            try {
+                direct.write(buf);
+                direct.flush();
+            } finally {
+                direct.close();
+            }
+            tmp.delete();
         }
     }
 

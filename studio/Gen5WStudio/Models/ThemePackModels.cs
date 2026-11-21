@@ -72,7 +72,11 @@ public sealed class ThemePackModel
         Style = new WidgetStyleModel { Transparent = true }
     };
 
-    private static readonly JsonSerializerOptions JsonOpts = new()
+    [JsonPropertyName("pages")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<LayoutNodeModel>? Pages { get; set; }
+
+    internal static readonly JsonSerializerOptions JsonOpts = new()
     {
         WriteIndented = true,
         PropertyNameCaseInsensitive = true,
@@ -97,6 +101,19 @@ public sealed class ThemePackModel
         Category = string.IsNullOrWhiteSpace(Category) ? "EV & Telemetry" : Category.Trim();
         Tokens ??= new();
         Background ??= new();
+        if (Pages is { Count: > 0 } && (Root == null || Root.Children == null || Root.Children.Count == 0))
+        {
+            Root = new LayoutNodeModel
+            {
+                Id = "root_pager",
+                Type = "panel",
+                Layout = "pager",
+                ShowDots = Pages.Count > 1,
+                Style = new WidgetStyleModel { Transparent = true },
+                Children = new List<LayoutNodeModel>(Pages)
+            };
+        }
+        Pages = null;
         Root ??= new() { Id = "root_shell", Type = "panel", Layout = "flex_col" };
         Root.NormalizeRecursive(isRoot: true);
     }
@@ -206,6 +223,7 @@ public sealed class LayoutNodeModel : INotifyPropertyChanged
     public int? GapPx { get; set; }
 
     [JsonPropertyName("paddingPx")]
+    [JsonConverter(typeof(InsetsJsonConverter))]
     public int[]? PaddingPx { get; set; }
 
     [JsonPropertyName("bounds")]
@@ -272,6 +290,7 @@ public sealed class LayoutNodeModel : INotifyPropertyChanged
     public string? BitmapAsset { get; set; }
 
     [JsonPropertyName("marginPx")]
+    [JsonConverter(typeof(InsetsJsonConverter))]
     public int[]? MarginPx { get; set; }
 
     [JsonPropertyName("horizontalAlign")]
@@ -416,6 +435,8 @@ public sealed class LayoutNodeModel : INotifyPropertyChanged
             Id = (IsPanel ? "panel_" : "w_") + Guid.NewGuid().ToString("N")[..6];
         }
         Style ??= new WidgetStyleModel();
+        Style.NormalizeAliases();
+        Action?.NormalizeAliases();
         if (IsPanel || isRoot)
         {
             Type = "panel";
@@ -430,6 +451,82 @@ public sealed class LayoutNodeModel : INotifyPropertyChanged
         {
             Kind ??= "tile";
         }
+    }
+
+    public LayoutNodeModel DeepCloneWithFreshIds(HashSet<string>? existingIds = null)
+    {
+        string raw = JsonSerializer.Serialize(this, ThemePackModel.JsonOpts);
+        var clone = JsonSerializer.Deserialize<LayoutNodeModel>(raw, ThemePackModel.JsonOpts)
+                    ?? throw new InvalidOperationException("Failed to clone LayoutNodeModel");
+        clone.NormalizeRecursive(false);
+        AssignFreshIdsRecursive(clone, existingIds ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase), isTopClone: true);
+        return clone;
+    }
+
+    private static void AssignFreshIdsRecursive(LayoutNodeModel node, HashSet<string> existingIds, bool isTopClone)
+    {
+        string baseId = string.IsNullOrWhiteSpace(node.Id) ? (node.IsPanel ? "panel" : "w") : node.Id;
+        string candidate = isTopClone ? $"{baseId}_copy" : $"{baseId}_{Guid.NewGuid().ToString("N")[..4]}";
+        int n = 2;
+        while (existingIds.Contains(candidate))
+        {
+            candidate = isTopClone ? $"{baseId}_copy{n++}" : $"{baseId}_{Guid.NewGuid().ToString("N")[..4]}";
+        }
+        node.Id = candidate;
+        existingIds.Add(candidate);
+        if (node.Children != null)
+        {
+            foreach (var ch in node.Children)
+                AssignFreshIdsRecursive(ch, existingIds, isTopClone: false);
+        }
+    }
+}
+
+public sealed class InsetsJsonConverter : JsonConverter<int[]?>
+{
+    public override int[]? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (reader.TokenType == JsonTokenType.Null) return null;
+        if (reader.TokenType == JsonTokenType.Number && reader.TryGetInt32(out int single))
+        {
+            int v = Math.Max(0, single);
+            return new[] { v, v, v, v };
+        }
+        if (reader.TokenType == JsonTokenType.StartArray)
+        {
+            var list = new List<int>(4);
+            while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+            {
+                if (reader.TokenType == JsonTokenType.Number)
+                {
+                    int v = reader.TryGetInt32(out int iv) ? iv : (int)Math.Round(reader.GetDouble());
+                    list.Add(Math.Max(0, v));
+                }
+            }
+            return list.Count switch
+            {
+                0 => null,
+                1 => new[] { list[0], list[0], list[0], list[0] },
+                2 => new[] { list[0], list[1], list[0], list[1] },
+                3 => new[] { list[0], list[1], list[2], list[1] },
+                _ => new[] { list[0], list[1], list[2], list[3] }
+            };
+        }
+        reader.Skip();
+        return null;
+    }
+
+    public override void Write(Utf8JsonWriter writer, int[]? value, JsonSerializerOptions options)
+    {
+        if (value == null)
+        {
+            writer.WriteNullValue();
+            return;
+        }
+        writer.WriteStartArray();
+        for (int i = 0; i < value.Length; i++)
+            writer.WriteNumberValue(value[i]);
+        writer.WriteEndArray();
     }
 }
 
@@ -511,7 +608,50 @@ public sealed class WidgetStyleModel
     public int? BgDimAlpha { get; set; }
 
     [JsonPropertyName("paddingPx")]
+    [JsonConverter(typeof(InsetsJsonConverter))]
     public int[]? PaddingPx { get; set; }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
+
+    public void NormalizeAliases()
+    {
+        if (ExtensionData == null) return;
+        if (string.IsNullOrWhiteSpace(BgEndColor) && TryGetExtString(ExtensionData, "gradientEndColor", out string? gradEnd))
+            BgEndColor = gradEnd;
+        if (!TitleSizePx.HasValue && TryGetExtDouble(ExtensionData, "fontSizePx", out double fSize))
+            TitleSizePx = fSize;
+        if (string.IsNullOrWhiteSpace(BgAnimAsset) && TryGetExtString(ExtensionData, "animAsset", out string? animRef))
+            BgAnimAsset = animRef;
+        if (!BgAnimFps.HasValue && TryGetExtDouble(ExtensionData, "animFps", out double aFps))
+            BgAnimFps = (int)Math.Round(aFps);
+        ExtensionData = null;
+    }
+
+    internal static bool TryGetExtString(Dictionary<string, JsonElement> ext, string key, out string? value)
+    {
+        foreach (var kv in ext)
+        {
+            if (string.Equals(kv.Key, key, StringComparison.OrdinalIgnoreCase) && kv.Value.ValueKind == JsonValueKind.String)
+            {
+                value = kv.Value.GetString();
+                return !string.IsNullOrWhiteSpace(value);
+            }
+        }
+        value = null;
+        return false;
+    }
+
+    internal static bool TryGetExtDouble(Dictionary<string, JsonElement> ext, string key, out double value)
+    {
+        foreach (var kv in ext)
+        {
+            if (string.Equals(kv.Key, key, StringComparison.OrdinalIgnoreCase) && kv.Value.ValueKind == JsonValueKind.Number && kv.Value.TryGetDouble(out value))
+                return true;
+        }
+        value = 0;
+        return false;
+    }
 }
 
 public sealed class IndicatorStyleModel
@@ -635,4 +775,19 @@ public sealed class ActionSpecModel
 
     [JsonPropertyName("cmd")]
     public string? Cmd { get; set; }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
+
+    public void NormalizeAliases()
+    {
+        if (ExtensionData == null) return;
+        if (string.IsNullOrWhiteSpace(Package) && WidgetStyleModel.TryGetExtString(ExtensionData, "pkg", out string? pkg))
+            Package = pkg;
+        if (string.IsNullOrWhiteSpace(Class) && WidgetStyleModel.TryGetExtString(ExtensionData, "cls", out string? cls))
+            Class = cls;
+        if (string.IsNullOrWhiteSpace(IntentAction) && WidgetStyleModel.TryGetExtString(ExtensionData, "action", out string? act))
+            IntentAction = act;
+        ExtensionData = null;
+    }
 }

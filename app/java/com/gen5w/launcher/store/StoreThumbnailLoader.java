@@ -8,6 +8,8 @@ import android.os.Looper;
 import android.util.LruCache;
 import android.widget.ImageView;
 
+import com.gen5w.launcher.render.SafeThemeZipExtractor;
+
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -112,18 +114,24 @@ public final class StoreThumbnailLoader {
     public void loadLocalThumbnail(
             final ImageView target,
             final File localFile,
+            final File zipFile,
             final byte[] fallbackBytes,
             final int reqW,
             final int reqH) {
         if (target == null) return;
-        if ((localFile == null || !localFile.isFile()) && (fallbackBytes == null || fallbackBytes.length == 0)) {
+        final boolean hasLocal = localFile != null && localFile.isFile();
+        final boolean hasZip = !hasLocal && zipFile != null && zipFile.isFile();
+        final boolean hasBytes = !hasLocal && !hasZip && fallbackBytes != null && fallbackBytes.length > 0;
+        if (!hasLocal && !hasZip && !hasBytes) {
             target.setTag(null);
             target.setImageBitmap(null);
             return;
         }
-        final String id = localFile != null
+        final String id = hasLocal
                 ? ("local:" + localFile.getAbsolutePath() + "@" + localFile.lastModified() + "#" + reqW + "x" + reqH)
-                : ("bytes:" + fallbackBytes.length + "#" + reqW + "x" + reqH);
+                : (hasZip
+                        ? ("zip:" + zipFile.getAbsolutePath() + "@" + zipFile.lastModified() + "#" + reqW + "x" + reqH)
+                        : ("bytes:" + Arrays.hashCode(fallbackBytes) + "#" + reqW + "x" + reqH));
         target.setTag(id);
 
         Bitmap cached = memCache.get(id);
@@ -139,9 +147,14 @@ public final class StoreThumbnailLoader {
             public void run() {
                 Bitmap bmp = null;
                 try {
-                    if (localFile != null && localFile.isFile()) {
+                    if (hasLocal) {
                         bmp = decodeSampledFile(localFile, reqW, reqH);
-                    } else if (fallbackBytes != null) {
+                    } else if (hasZip) {
+                        byte[] zb = SafeThemeZipExtractor.readZipThumbnailBytes(zipFile, 4 * 1024 * 1024);
+                        if (zb != null && zb.length > 0) {
+                            bmp = decodeSampledBytes(zb, reqW, reqH);
+                        }
+                    } else if (hasBytes) {
                         bmp = decodeSampledBytes(fallbackBytes, reqW, reqH);
                     }
                 } catch (Throwable ignored) {

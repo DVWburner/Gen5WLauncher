@@ -33,6 +33,11 @@ import com.gen5w.launcher.render.LayoutEngine;
 import com.gen5w.launcher.render.ThemePackLoader;
 import com.gen5w.launcher.render.ThemePackManager;
 
+import java.util.Arrays;
+import java.util.LinkedHashSet;
+import java.util.Locale;
+import java.util.Set;
+
 /**
  * Standalone Gen5W HOME / Launcher Activity (com.gen5w.launcher/.MainActivity).
  * Declared with android:disableSS="true" so HKMC RightScreenHome suppresses split-screen overlay.
@@ -65,6 +70,8 @@ public final class MainActivity extends Activity implements TelemetryModel.Liste
     private AppDrawerOverlay appDrawer;
     private SwitcherOverlayDialog switcherDialog;
     private StockButtonsOverlay stockButtonsOverlay;
+    private CarControlOverlayDialog carControlDialog;
+    private ThemedSettingsLabOverlay themedSettingsLab;
 
     private SwitcherClient.Status latestSwitcherStatus = new SwitcherClient.Status();
     private int lastLayoutW = 0;
@@ -93,12 +100,12 @@ public final class MainActivity extends Activity implements TelemetryModel.Liste
         showSystemBar = resolveEffectiveSystemBar();
         appliedSystemBar = showSystemBar;
         setTheme(showSystemBar ? R.style.LauncherTheme : R.style.LauncherTheme_Fullscreen);
+        requestWindowFeature(Window.FEATURE_NO_TITLE);
 
         super.onCreate(savedInstanceState);
         soundPlayer = new SafeClickSoundPlayer(this);
         soundPlayer.setMode(prefs.getString(PREF_SOUND_MODE, currentPack.tokens.soundMode));
 
-        requestWindowFeature(Window.FEATURE_NO_TITLE);
         applySystemBarMode();
 
         rootFrame = new FrameLayout(this) {
@@ -151,6 +158,7 @@ public final class MainActivity extends Activity implements TelemetryModel.Liste
             reloadThemePack();
         }
         applySystemBarMode();
+        syncHomeAnimationsAndOverlayState();
         telemetry.start();
         mainHandler.removeCallbacks(periodicTicker);
         mainHandler.post(periodicTicker);
@@ -160,13 +168,22 @@ public final class MainActivity extends Activity implements TelemetryModel.Liste
     protected void onPause() {
         resumed = false;
         mainHandler.removeCallbacks(periodicTicker);
+        syncHomeAnimationsAndOverlayState();
         telemetry.stop();
         super.onPause();
     }
 
     @Override
     protected void onDestroy() {
+        mainHandler.removeCallbacksAndMessages(null);
+        telemetry.setListener(null);
         telemetry.stop();
+        if (bindings != null) {
+            bindings.release();
+        }
+        if (backgroundHost != null) {
+            backgroundHost.setPaused(true);
+        }
         soundPlayer.release();
         super.onDestroy();
     }
@@ -179,8 +196,40 @@ public final class MainActivity extends Activity implements TelemetryModel.Liste
         }
     }
 
+    private String resolveActiveOverlayName() {
+        if (carControlDialog != null && carControlDialog.getVisibility() == View.VISIBLE) return "car_controls";
+        if (appDrawer != null && appDrawer.getVisibility() == View.VISIBLE) return "app_drawer";
+        if (switcherDialog != null && switcherDialog.getVisibility() == View.VISIBLE) return "switcher";
+        if (stockButtonsOverlay != null && stockButtonsOverlay.getVisibility() == View.VISIBLE) return "stock_tester";
+        if (themedSettingsLab != null && themedSettingsLab.getVisibility() == View.VISIBLE) return "themed_settings";
+        return "none";
+    }
+
+    private void syncHomeAnimationsAndOverlayState() {
+        String ovl = resolveActiveOverlayName();
+        boolean homeAnimActive = resumed && "none".equals(ovl);
+        if (backgroundHost != null) {
+            backgroundHost.setPaused(!homeAnimActive);
+        }
+        if (bindings != null) {
+            bindings.setAnimationsActive(homeAnimActive);
+        }
+        syncTelemetryExtraKeys();
+    }
+
+    private void syncTelemetryExtraKeys() {
+        Set<String> keys = LayoutEngine.collectTelemetryKeys(currentPack);
+        if (carControlDialog != null && carControlDialog.getVisibility() == View.VISIBLE) {
+            keys.addAll(Arrays.asList(CarControlOverlayDialog.REQUIRED_HMG_KEYS));
+        }
+        telemetry.setExtraKeys(keys);
+    }
+
     @Override
     public void onBackPressed() {
+        if (appDrawer != null && appDrawer.getVisibility() == View.VISIBLE && appDrawer.onBackPressed()) {
+            return;
+        }
         if (closeOverlays()) {
             return;
         }
@@ -195,6 +244,9 @@ public final class MainActivity extends Activity implements TelemetryModel.Liste
         if (switcherDialog != null && switcherDialog.getVisibility() == View.VISIBLE) {
             switcherDialog.update(latestSwitcherStatus, snapshot);
         }
+        if (carControlDialog != null && carControlDialog.getVisibility() == View.VISIBLE) {
+            carControlDialog.update(snapshot);
+        }
     }
 
     private void loadPackFromPrefs() {
@@ -202,7 +254,7 @@ public final class MainActivity extends Activity implements TelemetryModel.Liste
         String sourceMode = prefs.getString(ThemePackLoader.PACK_PREF_SOURCE, "auto");
         currentPack = ThemePackLoader.load(this, sourceMode);
         assets = new AssetResolver(this, currentPack.baseDir);
-        telemetry.setExtraKeys(LayoutEngine.collectTelemetryKeys(currentPack));
+        syncTelemetryExtraKeys();
         String bgOverride = prefs.getString(PREF_BG_OVERRIDE, "");
         if (!bgOverride.isEmpty()) {
             currentPack.background.type = bgOverride;
@@ -212,6 +264,7 @@ public final class MainActivity extends Activity implements TelemetryModel.Liste
     private void applyBackgroundSpec() {
         if (backgroundHost != null && currentPack != null) {
             backgroundHost.setSpec(currentPack.background, assets);
+            backgroundHost.setPaused(!(resumed && "none".equals(resolveActiveOverlayName())));
         }
     }
 
@@ -221,6 +274,10 @@ public final class MainActivity extends Activity implements TelemetryModel.Liste
         }
         lastLayoutW = w;
         lastLayoutH = h;
+        if (bindings != null) {
+            bindings.release();
+            bindings = null;
+        }
         packLayer.removeAllViews();
 
         LayoutEngine.Bindings[] out = new LayoutEngine.Bindings[1];
@@ -235,6 +292,7 @@ public final class MainActivity extends Activity implements TelemetryModel.Liste
         packLayer.addView(rendered);
 
         if (bindings != null) {
+            bindings.setAnimationsActive(resumed && "none".equals(resolveActiveOverlayName()));
             bindings.updateClock();
             bindings.updateTelemetry(telemetry.getLatest());
             bindings.updateSwitcher(latestSwitcherStatus);
@@ -260,14 +318,22 @@ public final class MainActivity extends Activity implements TelemetryModel.Liste
             return;
         }
         String t = action.type;
-        if ("preset".equals(t) || "launch".equals(t) || "launch_climate".equals(t) || "launch_projection".equals(t)
+        if ("open_car_controls".equals(t)
+                || ("preset".equals(t) && "car_controls_popup".equalsIgnoreCase(action.cmd))) {
+            openCarControlOverlay();
+        } else if ("car_cmd".equals(t)) {
+            dispatchCarCommand(action.cmd, action.extraVal);
+        } else if ("preset".equals(t) && action.cmd != null
+                && action.cmd.toLowerCase(Locale.US).startsWith("car_cmd:")) {
+            dispatchCarCommand(action.cmd.substring("car_cmd:".length()), action.extraVal);
+        } else if ("preset".equals(t) || "launch".equals(t) || "launch_climate".equals(t) || "launch_projection".equals(t)
                 || "broadcast".equals(t) || "root_broadcast".equals(t) || "root_start".equals(t) || "root_service".equals(t)) {
             AppLauncher.launchAction(this, action);
         } else if ("goto_page".equals(t)) {
             if (bindings != null) {
                 bindings.navigateToPage(action.cmd);
             }
-        } else if ("open_drawer".equals(t)) {
+        } else if ("open_drawer".equals(t) || "open_all_apps".equals(t)) {
             openAppDrawer();
         } else if ("open_switcher".equals(t)) {
             openSwitcherOverlay();
@@ -296,7 +362,7 @@ public final class MainActivity extends Activity implements TelemetryModel.Liste
             Toast.makeText(this, "Click audio: " + soundPlayer.getModeDisplayLabel(), Toast.LENGTH_SHORT).show();
         } else if ("toggle_bg".equals(t)) {
             cycleBackgroundMode();
-        } else if ("launch_stock".equals(t)) {
+        } else if ("launch_stock".equals(t) || "launch_stock_home".equals(t)) {
             AppLauncher.launchStockHome(this);
         } else if ("reload_pack".equals(t)) {
             reloadThemePack();
@@ -334,6 +400,9 @@ public final class MainActivity extends Activity implements TelemetryModel.Liste
         applyBackgroundSpec();
         if (lastLayoutW > 0 && lastLayoutH > 0) {
             rebuildPackView(lastLayoutW, lastLayoutH);
+        }
+        if (themedSettingsLab != null) {
+            themedSettingsLab.updateActiveThemePack(currentPack);
         }
         Toast.makeText(this, "Loaded pack (" + currentPack.sourceLabel + ")", Toast.LENGTH_SHORT).show();
     }
@@ -426,6 +495,23 @@ public final class MainActivity extends Activity implements TelemetryModel.Liste
                     if (appDrawer != null) {
                         appDrawer.setVisibility(View.GONE);
                     }
+                    syncHomeAnimationsAndOverlayState();
+                }
+
+                @Override
+                public void onOpenCarControlsRequested() {
+                    if (appDrawer != null) {
+                        appDrawer.setVisibility(View.GONE);
+                    }
+                    openCarControlOverlay();
+                }
+
+                @Override
+                public void onOpenThemedSettingsLabRequested() {
+                    if (appDrawer != null) {
+                        appDrawer.setVisibility(View.GONE);
+                    }
+                    openThemedSettingsLabOverlay();
                 }
             });
             rootFrame.addView(appDrawer, new FrameLayout.LayoutParams(
@@ -435,6 +521,7 @@ public final class MainActivity extends Activity implements TelemetryModel.Liste
         }
         appDrawer.setVisibility(View.VISIBLE);
         appDrawer.bringToFront();
+        syncHomeAnimationsAndOverlayState();
     }
 
     private void openSwitcherOverlay() {
@@ -449,7 +536,7 @@ public final class MainActivity extends Activity implements TelemetryModel.Liste
                 public void onSwitchPackSourceAndReload() {
                     String cur = prefs.getString(ThemePackLoader.PACK_PREF_SOURCE, "auto");
                     String next = "auto".equals(cur) ? "usb" : ("usb".equals(cur) ? "default" : "auto");
-                    prefs.edit().putString(ThemePackLoader.PACK_PREF_SOURCE, next).apply();
+                    ThemePackManager.setActivePack(MainActivity.this, ThemePackManager.getActivePackId(MainActivity.this), next);
                     reloadThemePack();
                     if (switcherDialog != null) {
                         switcherDialog.update(latestSwitcherStatus, telemetry.getLatest());
@@ -471,6 +558,7 @@ public final class MainActivity extends Activity implements TelemetryModel.Liste
                     if (switcherDialog != null) {
                         switcherDialog.setVisibility(View.GONE);
                     }
+                    syncHomeAnimationsAndOverlayState();
                 }
 
                 @Override
@@ -489,6 +577,7 @@ public final class MainActivity extends Activity implements TelemetryModel.Liste
         switcherDialog.setVisibility(View.VISIBLE);
         switcherDialog.bringToFront();
         switcherDialog.update(latestSwitcherStatus, telemetry.getLatest());
+        syncHomeAnimationsAndOverlayState();
     }
 
     private void openStockTesterOverlay() {
@@ -499,6 +588,15 @@ public final class MainActivity extends Activity implements TelemetryModel.Liste
                     if (stockButtonsOverlay != null) {
                         stockButtonsOverlay.setVisibility(View.GONE);
                     }
+                    syncHomeAnimationsAndOverlayState();
+                }
+
+                @Override
+                public void onOpenThemedSettingsLabRequested() {
+                    if (stockButtonsOverlay != null) {
+                        stockButtonsOverlay.setVisibility(View.GONE);
+                    }
+                    openThemedSettingsLabOverlay();
                 }
             });
             rootFrame.addView(stockButtonsOverlay, new FrameLayout.LayoutParams(
@@ -508,6 +606,74 @@ public final class MainActivity extends Activity implements TelemetryModel.Liste
         }
         stockButtonsOverlay.setVisibility(View.VISIBLE);
         stockButtonsOverlay.bringToFront();
+        syncHomeAnimationsAndOverlayState();
+    }
+
+    private void openThemedSettingsLabOverlay() {
+        if (themedSettingsLab == null) {
+            themedSettingsLab = new ThemedSettingsLabOverlay(this, soundPlayer, new ThemedSettingsLabOverlay.Listener() {
+                @Override
+                public void onCloseRequested() {
+                    if (themedSettingsLab != null) {
+                        themedSettingsLab.setVisibility(View.GONE);
+                    }
+                    syncHomeAnimationsAndOverlayState();
+                }
+            });
+            rootFrame.addView(themedSettingsLab, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        }
+        themedSettingsLab.updateActiveThemePack(currentPack);
+        themedSettingsLab.reload();
+        themedSettingsLab.setVisibility(View.VISIBLE);
+        themedSettingsLab.bringToFront();
+        syncHomeAnimationsAndOverlayState();
+    }
+
+    private void openCarControlOverlay() {
+        if (carControlDialog == null) {
+            carControlDialog = new CarControlOverlayDialog(this, soundPlayer, new CarControlOverlayDialog.Listener() {
+                @Override
+                public void onCloseRequested() {
+                    if (carControlDialog != null) {
+                        carControlDialog.setVisibility(View.GONE);
+                    }
+                    syncHomeAnimationsAndOverlayState();
+                }
+
+                @Override
+                public void onCommandDispatched() {
+                    telemetry.requestImmediateRefresh();
+                }
+            });
+            rootFrame.addView(carControlDialog, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        }
+        carControlDialog.setVisibility(View.VISIBLE);
+        carControlDialog.bringToFront();
+        syncHomeAnimationsAndOverlayState();
+        carControlDialog.update(telemetry.getLatest());
+        telemetry.requestImmediateRefresh();
+    }
+
+    private void dispatchCarCommand(final String cmd, final String arg) {
+        if (cmd == null || cmd.trim().isEmpty()) {
+            return;
+        }
+        final String cleanCmd = cmd.trim();
+        final String cleanArg = arg == null ? "" : arg.trim();
+        SwitcherClient.sendCarCommandAsync(cleanCmd, cleanArg, new SwitcherClient.SimpleCallback() {
+            @Override
+            public void onResult(boolean ok, String message) {
+                if (isFinishing() || isDestroyed()) {
+                    return;
+                }
+                telemetry.requestImmediateRefresh();
+                if (!ok && message != null && !message.isEmpty()) {
+                    Toast.makeText(MainActivity.this, message, Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
     }
 
     private void openThemeManagerActivity(String initialTab) {
@@ -537,6 +703,17 @@ public final class MainActivity extends Activity implements TelemetryModel.Liste
             stockButtonsOverlay.setVisibility(View.GONE);
             closed = true;
         }
+        if (carControlDialog != null && carControlDialog.getVisibility() == View.VISIBLE) {
+            carControlDialog.setVisibility(View.GONE);
+            closed = true;
+        }
+        if (themedSettingsLab != null && themedSettingsLab.getVisibility() == View.VISIBLE) {
+            themedSettingsLab.setVisibility(View.GONE);
+            closed = true;
+        }
+        if (closed) {
+            syncHomeAnimationsAndOverlayState();
+        }
         return closed;
     }
 
@@ -544,6 +721,9 @@ public final class MainActivity extends Activity implements TelemetryModel.Liste
         SwitcherClient.sendAsync(command, new SwitcherClient.Callback() {
             @Override
             public void onResult(SwitcherClient.Status status) {
+                if (isFinishing() || isDestroyed()) {
+                    return;
+                }
                 latestSwitcherStatus = status;
                 if (bindings != null) {
                     bindings.updateSwitcher(status);

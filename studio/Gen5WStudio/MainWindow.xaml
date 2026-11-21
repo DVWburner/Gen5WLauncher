@@ -75,6 +75,22 @@
             <Setter Property="FontSize" Value="11" />
             <Setter Property="Margin" Value="0,6,0,2" />
         </Style>
+        <Style TargetType="ComboBoxItem" x:Key="CategorizedComboItemStyle">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsHeader}" Value="True">
+                    <Setter Property="IsEnabled" Value="False" />
+                    <Setter Property="Focusable" Value="False" />
+                    <Setter Property="FontWeight" Value="Bold" />
+                    <Setter Property="FontSize" Value="11" />
+                    <Setter Property="Background" Value="#FFE2E8F0" />
+                    <Setter Property="BorderBrush" Value="#FFCBD5E1" />
+                    <Setter Property="BorderThickness" Value="0,1,0,1" />
+                    <Setter Property="HorizontalContentAlignment" Value="Center" />
+                    <Setter Property="Padding" Value="6,6,6,5" />
+                    <Setter Property="Margin" Value="0,3,0,1" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
     </Window.Resources>
 
     <Grid>
@@ -106,7 +122,8 @@
 
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,2,14,2">
                     <Button x:Name="ThemeStoreBtn" Content="Theme Store" ToolTip="Browse &amp; download themes from market.ioniqthemes.com" Background="#FF1E3A8A" BorderBrush="#FF3B82F6" Margin="0,0,4,0" Click="OnOpenThemeStoreClick" />
-                    <Button x:Name="UploadStoreBtn" Content="Upload to Theme Store" ToolTip="Package ONLY the currently active theme as a safe .zip with screenshot thumbnail &amp; upload to Store" Background="#FF065F46" BorderBrush="#FF10B981" Click="OnUploadThemeStoreClick" />
+                    <Button x:Name="UploadStoreBtn" Content="Upload to Theme Store" ToolTip="Package ONLY the currently active theme as a safe .zip with screenshot thumbnail &amp; upload to Store" Background="#FF065F46" BorderBrush="#FF10B981" Margin="0,0,4,0" Click="OnUploadThemeStoreClick" />
+                    <Button x:Name="AiContextBtn" Content="AI Context" ToolTip="Copy an up-to-date AI Agent prompt containing all Gen5W theme rules, sensors, car controls, and animated background specs" Background="#FF4C1D95" BorderBrush="#FF8B5CF6" Click="OnOpenAiContextClick" />
                 </StackPanel>
 
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,2,0,2">
@@ -237,10 +254,11 @@
                                        Foreground="#FF94A3B8" FontSize="13" TextWrapping="Wrap" Margin="0,4,0,0" />
                         </StackPanel>
 
-                        <UniformGrid Grid.Row="1" Columns="3" Margin="0,0,0,22">
-                            <Button Content="+ New Theme..." Background="#FF0F766E" BorderBrush="#FF14B8A6" Padding="12,10" Margin="0,0,6,0" Click="OnNewThemeClick" />
-                            <Button Content="Open Theme / Pack..." Background="#FF1E293B" BorderBrush="#FF334155" Padding="12,10" Margin="3,0" Click="OnOpenFolderClick" />
-                            <Button Content="Browse Theme Store" Background="#FF1E3A8A" BorderBrush="#FF3B82F6" Padding="12,10" Margin="6,0,0,0" Click="OnOpenThemeStoreClick" />
+                        <UniformGrid Grid.Row="1" Columns="4" Margin="0,0,0,22">
+                            <Button Content="+ New Theme..." Background="#FF0F766E" BorderBrush="#FF14B8A6" Padding="10,10" Margin="0,0,4,0" Click="OnNewThemeClick" />
+                            <Button Content="Open Theme / Pack..." Background="#FF1E293B" BorderBrush="#FF334155" Padding="10,10" Margin="3,0" Click="OnOpenFolderClick" />
+                            <Button Content="Browse Theme Store" Background="#FF1E3A8A" BorderBrush="#FF3B82F6" Padding="10,10" Margin="3,0" Click="OnOpenThemeStoreClick" />
+                            <Button Content="AI Context Prompt" Background="#FF4C1D95" BorderBrush="#FF8B5CF6" Padding="10,10" Margin="4,0,0,0" Click="OnOpenAiContextClick" />
                         </UniformGrid>
 
                         <DockPanel Grid.Row="2" Margin="0,0,0,8">
@@ -323,10 +341,11 @@
                                         </Grid>
 
                                         <StackPanel x:Name="SensorBindGroup">
-                                            <TextBlock Text="Bind Data Sensor (HMG-API — independent per bar / ring / text)" Style="{StaticResource FieldLabel}" />
+                                            <TextBlock Text="Bind Data Sensor — GET / Read Live State (independent per widget)" Style="{StaticResource FieldLabel}" />
                                             <ComboBox x:Name="TelemetryKeyCombo"
                                                       IsEditable="True"
                                                       TextSearch.TextPath="Key"
+                                                      ItemContainerStyle="{StaticResource CategorizedComboItemStyle}"
                                                       SelectionChanged="OnTelemetrySensorChanged"
                                                       LostFocus="OnInspectorTextApplied">
                                                 <ComboBox.ItemTemplate>
@@ -567,29 +586,12 @@
                                 <StackPanel x:Name="ActionFieldsGroup">
                                     <DockPanel Margin="0,12,0,2">
                                         <Button DockPanel.Dock="Right" Content="Clear (none)" Padding="6,2" FontSize="11" Click="OnClearActionClick" />
-                                        <TextBlock Text="Tap Action" FontWeight="Bold" Foreground="#FF7DD3FC" VerticalAlignment="Center" />
+                                        <TextBlock Text="Tap Action — SET / Execute On Touch" FontWeight="Bold" Foreground="#FF7DD3FC" VerticalAlignment="Center" />
                                     </DockPanel>
                                     <TextBlock x:Name="ActionScopeHint" Text="Whole-panel tap selector" Foreground="#FF94A3B8" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,4" />
-                                    <ComboBox x:Name="PresetCombo" SelectionChanged="OnPresetSelected">
-                                        <ComboBox.ItemContainerStyle>
-                                            <Style TargetType="ComboBoxItem">
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding IsHeader}" Value="True">
-                                                        <Setter Property="IsEnabled" Value="False" />
-                                                        <Setter Property="Focusable" Value="False" />
-                                                        <Setter Property="FontWeight" Value="Bold" />
-                                                        <Setter Property="FontSize" Value="11" />
-                                                        <Setter Property="Background" Value="#FFE2E8F0" />
-                                                        <Setter Property="BorderBrush" Value="#FFCBD5E1" />
-                                                        <Setter Property="BorderThickness" Value="0,1,0,1" />
-                                                        <Setter Property="HorizontalContentAlignment" Value="Center" />
-                                                        <Setter Property="Padding" Value="6,6,6,5" />
-                                                        <Setter Property="Margin" Value="0,3,0,1" />
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </ComboBox.ItemContainerStyle>
-                                    </ComboBox>
+                                    <ComboBox x:Name="PresetCombo"
+                                              ItemContainerStyle="{StaticResource CategorizedComboItemStyle}"
+                                              SelectionChanged="OnPresetSelected" />
                                     <Grid>
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                                         <StackPanel Grid.Column="0" Margin="0,0,4,0">

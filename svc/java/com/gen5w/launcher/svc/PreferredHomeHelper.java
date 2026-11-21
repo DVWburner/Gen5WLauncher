@@ -10,7 +10,9 @@ import android.content.pm.ResolveInfo;
 import android.os.IBinder;
 
 import java.io.BufferedReader;
+import java.io.Closeable;
 import java.io.File;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -38,6 +40,7 @@ final class PreferredHomeHelper {
     private Method mResolveIntent;
     private Method mQueryIntentActivities;
     private Method mReplacePreferredActivity;
+    private Method mClearPackagePreferredActivities;
     private Method mGetPackageInfo;
     private Method mGetPackageUid;
 
@@ -60,9 +63,19 @@ final class PreferredHomeHelper {
         mReplacePreferredActivity = ipm.getMethod(
                 "replacePreferredActivity",
                 IntentFilter.class, int.class, ComponentName[].class, ComponentName.class);
+        mClearPackagePreferredActivities = ipm.getMethod("clearPackagePreferredActivities", String.class);
         mGetPackageInfo = ipm.getMethod("getPackageInfo", String.class, int.class, int.class);
         mGetPackageUid = ipm.getMethod("getPackageUid", String.class, int.class);
         return pm;
+    }
+
+    boolean isResolverComponent(ComponentName cn) {
+        if (cn == null) {
+            return false;
+        }
+        String pkg = cn.getPackageName();
+        String cls = cn.getClassName();
+        return "android".equals(pkg) || (cls != null && cls.contains("ResolverActivity"));
     }
 
     static Intent createHomeIntent() {
@@ -126,7 +139,7 @@ final class PreferredHomeHelper {
         }
         CommandResult res = runCommandCapture(new String[] {
                 "/system/bin/pm", "install", "-r", apkFile.getAbsolutePath()
-        });
+        }, 30000L);
         boolean ok = res.exitCode == 0 && (res.output.contains("Success") || !res.output.contains("Failure"));
         System.out.println("[HomeSwitcher] installApkReplace(" + apkFile.getName()
                 + ") rc=" + res.exitCode + " out=" + res.output);
@@ -213,15 +226,79 @@ final class PreferredHomeHelper {
 
             ComponentName verified = resolveCurrentHome();
             boolean ok = target.equals(verified);
-            System.out.println("[HomeSwitcher] setPreferredHome(" + target.flattenToShortString()
+            String msg = "setPreferredHome(" + target.flattenToShortString()
                     + ") -> resolved=" + (verified == null ? "null" : verified.flattenToShortString())
-                    + " ok=" + ok);
+                    + " ok=" + ok;
+            System.out.println("[HomeSwitcher] " + msg);
             return ok;
         } catch (Throwable t) {
             System.err.println("[HomeSwitcher] setPreferredHome(" + target.flattenToShortString() + ") error: " + t);
             t.printStackTrace(System.err);
             return false;
         }
+    }
+
+    /**
+     * Clears any locked CATEGORY_HOME PreferredActivity in PackageManagerService so that pressing the
+     * physical HOME button brings up Android 4.4.2's native ResolverActivity ("Select a Home app").
+     */
+    boolean clearHomePreferredActivities() {
+        try {
+            Object service = ensurePm();
+            ComponentName before = resolveCurrentHome();
+            List<String> pkgsToClear = new ArrayList<String>();
+            pkgsToClear.add(STOCK_HOME.getPackageName());
+            pkgsToClear.add(CUSTOM_HOME.getPackageName());
+            if (before != null && !isResolverComponent(before)) {
+                String beforePkg = before.getPackageName();
+                if (beforePkg != null && !beforePkg.isEmpty() && !pkgsToClear.contains(beforePkg)) {
+                    pkgsToClear.add(beforePkg);
+                }
+            }
+            ComponentName[] homeCandidates = queryHomeSet(null);
+            for (ComponentName cn : homeCandidates) {
+                if (cn != null && !isResolverComponent(cn)) {
+                    String p = cn.getPackageName();
+                    if (p != null && !p.isEmpty() && !pkgsToClear.contains(p)) {
+                        pkgsToClear.add(p);
+                    }
+                }
+            }
+            for (String pkg : pkgsToClear) {
+                try {
+                    mClearPackagePreferredActivities.invoke(service, pkg);
+                } catch (Throwable inner) {
+                    System.err.println("[HomeSwitcher] clearPackagePreferredActivities(" + pkg + ") failed: " + inner);
+                }
+            }
+            ComponentName after = resolveCurrentHome();
+            boolean chooserReady = isResolverComponent(after)
+                    || (after != null && !STOCK_HOME.equals(after) && !CUSTOM_HOME.equals(after));
+            String msg = "clearHomePreferredActivities(before="
+                    + (before == null ? "null" : before.flattenToShortString())
+                    + ") -> resolved=" + (after == null ? "null" : after.flattenToShortString())
+                    + " chooserReady=" + chooserReady;
+            System.out.println("[HomeSwitcher] " + msg);
+            return chooserReady;
+        } catch (Throwable t) {
+            System.err.println("[HomeSwitcher] clearHomePreferredActivities error: " + t);
+            return false;
+        }
+    }
+
+    /**
+     * Clears locked HOME preferred activities and immediately dispatches an implicit HOME intent
+     * so Android's native Home chooser dialog appears on screen right away.
+     */
+    boolean promptHomeChooserNow() {
+        boolean cleared = clearHomePreferredActivities();
+        String[] cmd = new String[] {
+                "/system/bin/am", "start",
+                "-a", Intent.ACTION_MAIN,
+                "-c", Intent.CATEGORY_HOME
+        };
+        CommandResult res = runCommandCapture(cmd, 8000L);
+        return cleared && res.exitCode == 0;
     }
 
     boolean bringHomeToFront(ComponentName target) {
@@ -235,7 +312,8 @@ final class PreferredHomeHelper {
                 "-n", target.flattenToShortString(),
                 "--activity-clear-top"
         };
-        return runCommand(cmd) == 0;
+        CommandResult res = runCommandCapture(cmd, 8000L);
+        return res.exitCode == 0;
     }
 
     void showToast(String message) {
@@ -251,30 +329,105 @@ final class PreferredHomeHelper {
     }
 
     private static int runCommand(String[] cmd) {
-        return runCommandCapture(cmd).exitCode;
+        return runCommandCapture(cmd, 8000L).exitCode;
     }
 
-    private static CommandResult runCommandCapture(String[] cmd) {
+    static CommandResult runCommandCapture(String[] cmd) {
+        return runCommandCapture(cmd, 8000L);
+    }
+
+    static CommandResult runCommandCapture(String[] cmd, long timeoutMs) {
         Process p = null;
-        StringBuilder sb = new StringBuilder();
+        InputStream in = null;
+        BufferedReader br = null;
+        final StringBuilder sb = new StringBuilder();
         try {
             p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
-            BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()));
-            String line;
-            while ((line = br.readLine()) != null) {
-                if (sb.length() < 1500) {
-                    if (sb.length() > 0) sb.append(" | ");
-                    sb.append(line.trim());
+            closeQuietly(p.getOutputStream());
+            in = p.getInputStream();
+            br = new BufferedReader(new InputStreamReader(in));
+            final BufferedReader readerRef = br;
+            Thread readerThread = new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        String line;
+                        while ((line = readerRef.readLine()) != null) {
+                            synchronized (sb) {
+                                if (sb.length() < 1500) {
+                                    if (sb.length() > 0) sb.append(" | ");
+                                    sb.append(line.trim());
+                                }
+                            }
+                        }
+                    } catch (Throwable ignored) {
+                    }
+                }
+            }, "cmd-capture-reader");
+            readerThread.setDaemon(true);
+            readerThread.start();
+
+            long clampedTimeoutMs = Math.max(250L, timeoutMs);
+            try {
+                readerThread.join(clampedTimeoutMs);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
+
+            long graceDeadlineNano = System.nanoTime() + (readerThread.isAlive() ? 0L : 150_000_000L);
+            Integer exitCode = null;
+            while (true) {
+                try {
+                    exitCode = Integer.valueOf(p.exitValue());
+                    break;
+                } catch (IllegalThreadStateException running) {
+                    if (System.nanoTime() >= graceDeadlineNano) {
+                        break;
+                    }
+                    try {
+                        Thread.sleep(15L);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
                 }
             }
-            int rc = p.waitFor();
-            return new CommandResult(rc, sb.toString());
+            if (exitCode == null) {
+                try {
+                    p.destroy();
+                } catch (Throwable ignored) {
+                }
+                closeQuietly(in);
+                return new CommandResult(-1, "Timed out after " + clampedTimeoutMs + "ms");
+            }
+            String outText;
+            synchronized (sb) {
+                outText = sb.toString();
+            }
+            return new CommandResult(exitCode.intValue(), outText);
         } catch (Throwable t) {
             System.err.println("[HomeSwitcher] cmd error: " + t);
             return new CommandResult(-1, String.valueOf(t.getMessage()));
         } finally {
+            closeQuietly(br);
+            closeQuietly(in);
             if (p != null) {
-                p.destroy();
+                closeQuietly(p.getInputStream());
+                closeQuietly(p.getOutputStream());
+                closeQuietly(p.getErrorStream());
+                try {
+                    p.destroy();
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+    }
+
+    private static void closeQuietly(Closeable c) {
+        if (c != null) {
+            try {
+                c.close();
+            } catch (Throwable ignored) {
             }
         }
     }

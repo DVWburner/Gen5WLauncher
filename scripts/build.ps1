@@ -6,8 +6,26 @@ Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 $Root = Split-Path -Parent $PSScriptRoot
-$Version = "0.3.9"
+$Version = "0.4.8"
 $ModId = "gen5w-launcher"
+
+# Cross-check version consistency across mod.json, AndroidManifest.xml, and HomeSwitcher.java
+$ModJsonObj = Get-Content (Join-Path $Root "mod\mod.json") -Raw | ConvertFrom-Json
+if ($ModJsonObj.version -ne $Version) {
+    throw "Version mismatch: mod/mod.json version '$($ModJsonObj.version)' != scripts/build.ps1 Version '$Version'"
+}
+$ManifestRaw = [System.IO.File]::ReadAllText((Join-Path $Root "app\AndroidManifest.xml"), [System.Text.Encoding]::UTF8)
+if ($ManifestRaw -notmatch 'android:versionName="([^"]+)"' -or $Matches[1] -ne $Version) {
+    throw "Version mismatch: app/AndroidManifest.xml versionName != '$Version'"
+}
+if ($ManifestRaw -notmatch 'android:versionCode="(\d+)"') {
+    throw "Missing android:versionCode in app/AndroidManifest.xml"
+}
+$ManifestVersionCode = [int]$Matches[1]
+$HomeSwitcherRaw = [System.IO.File]::ReadAllText((Join-Path $Root "svc\java\com\gen5w\launcher\svc\HomeSwitcher.java"), [System.Text.Encoding]::UTF8)
+if ($HomeSwitcherRaw -notmatch 'EXPECTED_APP_VERSION_CODE\s*=\s*(\d+)\s*;' -or ([int]$Matches[1]) -ne $ManifestVersionCode) {
+    throw "VersionCode mismatch: HomeSwitcher.EXPECTED_APP_VERSION_CODE != AndroidManifest.xml versionCode ($ManifestVersionCode)"
+}
 
 function Resolve-ExistingPath([string[]]$Candidates, [string]$Label) {
     foreach ($c in $Candidates) {

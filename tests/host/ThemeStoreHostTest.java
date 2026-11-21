@@ -82,15 +82,24 @@ public final class ThemeStoreHostTest {
         X509Certificate[] issuers = tm.getAcceptedIssuers();
         boolean hasX1 = false;
         boolean hasX2 = false;
+        boolean hasGtsR1 = false;
+        boolean hasGtsR4 = false;
+        boolean hasDigiG2 = false;
         for (X509Certificate c : issuers) {
             String dn = c.getSubjectX500Principal().getName();
             if (dn.contains("CN=ISRG Root X1")) hasX1 = true;
             if (dn.contains("CN=ISRG Root X2")) hasX2 = true;
+            if (dn.contains("CN=GTS Root R1")) hasGtsR1 = true;
+            if (dn.contains("CN=GTS Root R4")) hasGtsR4 = true;
+            if (dn.contains("CN=DigiCert Global Root G2")) hasDigiG2 = true;
         }
         check(hasX1, "ISRG Root X1 missing from composite TrustManager");
         check(hasX2, "ISRG Root X2 missing from composite TrustManager");
+        check(hasGtsR1, "GTS Root R1 missing from composite TrustManager");
+        check(hasGtsR4, "GTS Root R4 missing from composite TrustManager");
+        check(hasDigiG2, "DigiCert Global Root G2 missing from composite TrustManager");
         check(StoreTlsHelper.getSocketFactory() != null, "TLSv1.2 SSLSocketFactory null");
-        System.out.println("ok  StoreTlsHelper: ISRG Root X1 + X2 loaded & Tls12SocketFactory ready");
+        System.out.println("ok  StoreTlsHelper: ISRG X1/X2 + GTS R1/R4 + DigiCert G2 loaded & Tls12SocketFactory ready");
     }
 
     private static void testBundledDefaultPackContainsThemeStore() throws Exception {

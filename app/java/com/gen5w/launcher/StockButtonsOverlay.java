@@ -30,6 +30,7 @@ import java.util.Map;
 final class StockButtonsOverlay extends FrameLayout {
     interface Listener {
         void onCloseRequested();
+        void onOpenThemedSettingsLabRequested();
     }
 
     private static final String FILTER_ALL = "All";
@@ -81,6 +82,21 @@ final class StockButtonsOverlay extends FrameLayout {
         titleCol.addView(title);
         titleCol.addView(summaryLabel);
         header.addView(titleCol, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView labBtn = makeBtn(context, "Setup Theme Lab", 0xFF0E3B3E, 0xFF10B981, 16f);
+        labBtn.setOnClickListener(new OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                StockButtonsOverlay.this.sound.playClick(v);
+                if (StockButtonsOverlay.this.listener != null) {
+                    StockButtonsOverlay.this.listener.onOpenThemedSettingsLabRequested();
+                }
+            }
+        });
+        LinearLayout.LayoutParams labLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        labLp.rightMargin = 10;
+        header.addView(labBtn, labLp);
 
         TextView closeBtn = makeBtn(context, "Close", 0xFF1E293B, 0xFF64748B, 18f);
         closeBtn.setOnClickListener(new OnClickListener() {

@@ -13,7 +13,9 @@ import java.util.Properties;
  */
 final class SwitcherStateStore {
     static final class State {
+        int schemaVersion = 1;
         boolean homeEnabled;
+        boolean userChoseStock;
         int strikes;
         String trippedReason = "";
         String lastEvent = "initialized";
@@ -33,6 +35,7 @@ final class SwitcherStateStore {
     synchronized State load() {
         State s = new State();
         if (!stateFile.isFile()) {
+            s.schemaVersion = 3;
             return s;
         }
         Properties p = new Properties();
@@ -40,7 +43,13 @@ final class SwitcherStateStore {
         try {
             in = new FileInputStream(stateFile);
             p.load(in);
+            try {
+                s.schemaVersion = Integer.parseInt(p.getProperty("schemaVersion", "1").trim());
+            } catch (NumberFormatException ignored) {
+                s.schemaVersion = 1;
+            }
             s.homeEnabled = "true".equalsIgnoreCase(p.getProperty("homeEnabled", "false"));
+            s.userChoseStock = "true".equalsIgnoreCase(p.getProperty("userChoseStock", "false"));
             try {
                 s.strikes = Math.max(0, Integer.parseInt(p.getProperty("strikes", "0").trim()));
             } catch (NumberFormatException ignored) {
@@ -63,7 +72,9 @@ final class SwitcherStateStore {
 
     synchronized void save(State s) {
         Properties p = new Properties();
+        p.setProperty("schemaVersion", Integer.toString(Math.max(3, s.schemaVersion)));
         p.setProperty("homeEnabled", Boolean.toString(s.homeEnabled));
+        p.setProperty("userChoseStock", Boolean.toString(s.userChoseStock));
         p.setProperty("strikes", Integer.toString(Math.max(0, s.strikes)));
         p.setProperty("trippedReason", nonNull(s.trippedReason));
         p.setProperty("lastEvent", nonNull(s.lastEvent));

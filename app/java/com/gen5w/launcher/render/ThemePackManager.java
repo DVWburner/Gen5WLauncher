@@ -33,6 +33,7 @@ public final class ThemePackManager {
     public static final String PREF_ACTIVE_PACK_ID = "active_pack_id";
     public static final String PREF_PACK_CHANGE_SEQ = "pack_change_seq";
     public static final String PREF_BG_OVERRIDE = "bg_override";
+    public static final String PREF_USB_PREVIEW_PATH = "usb_preview_path";
     public static final String BUNDLED_ID = "bundled:default";
     public static final String STORE_META_FILE = ".store_meta.json";
 
@@ -118,15 +119,30 @@ public final class ThemePackManager {
         return context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE).getInt(PREF_PACK_CHANGE_SEQ, 0);
     }
 
-    public static void setActivePack(Context context, String packId, String sourceMode) {
+    public static void setActiveUsbPreviewDir(Context context, File usbDir) {
         SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
         int seq = prefs.getInt(PREF_PACK_CHANGE_SEQ, 0) + 1;
         prefs.edit()
-                .putString(PREF_ACTIVE_PACK_ID, packId == null || packId.isEmpty() ? BUNDLED_ID : packId)
-                .putString(ThemePackLoader.PACK_PREF_SOURCE, sourceMode == null ? "auto" : sourceMode)
+                .putString(PREF_ACTIVE_PACK_ID, BUNDLED_ID)
+                .putString(ThemePackLoader.PACK_PREF_SOURCE, "usb")
+                .putString(PREF_USB_PREVIEW_PATH, usbDir == null ? "" : usbDir.getAbsolutePath())
                 .remove(PREF_BG_OVERRIDE)
                 .putInt(PREF_PACK_CHANGE_SEQ, seq)
                 .apply();
+    }
+
+    public static void setActivePack(Context context, String packId, String sourceMode) {
+        SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        int seq = prefs.getInt(PREF_PACK_CHANGE_SEQ, 0) + 1;
+        SharedPreferences.Editor ed = prefs.edit()
+                .putString(PREF_ACTIVE_PACK_ID, packId == null || packId.isEmpty() ? BUNDLED_ID : packId)
+                .putString(ThemePackLoader.PACK_PREF_SOURCE, sourceMode == null ? "auto" : sourceMode)
+                .remove(PREF_BG_OVERRIDE)
+                .putInt(PREF_PACK_CHANGE_SEQ, seq);
+        if (!"usb".equals(sourceMode)) {
+            ed.remove(PREF_USB_PREVIEW_PATH);
+        }
+        ed.apply();
     }
 
     public static File resolveActiveInternalDir(Context context) {
@@ -142,7 +158,7 @@ public final class ThemePackManager {
         return new File(legacyActive, "layout.json").isFile() ? legacyActive : null;
     }
 
-    public static List<PackEntry> discoverAllPacks(Context context) {
+    public static List<PackEntry> discoverInstalledOnly(Context context) {
         List<PackEntry> out = new ArrayList<PackEntry>();
         String activeId = getActivePackId(context);
         String sourceMode = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
@@ -152,7 +168,7 @@ public final class ThemePackManager {
         try {
             String json = readStreamText(context.getAssets().open("packs/default/layout.json"));
             ThemePack def = ThemePack.fromJson(json, "bundled:default", "");
-            boolean defActive = "default".equals(sourceMode) || BUNDLED_ID.equals(activeId);
+            boolean defActive = "default".equals(sourceMode) || (!"usb".equals(sourceMode) && BUNDLED_ID.equals(activeId));
             out.add(new PackEntry(BUNDLED_ID, "default", def.name, def.author, def.version, 1,
                     "Built-in", def.description, def.formatVersion, SourceType.BUNDLED,
                     null, null, null, null, defActive, ""));
@@ -179,6 +195,14 @@ public final class ThemePackManager {
                 }
             }
         }
+        return out;
+    }
+
+    public static List<PackEntry> discoverAllPacks(Context context) {
+        List<PackEntry> out = discoverInstalledOnly(context);
+        SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        String sourceMode = prefs.getString(ThemePackLoader.PACK_PREF_SOURCE, "auto");
+        File activeUsbDir = "usb".equals(sourceMode) ? ThemePackLoader.findUsbPreviewDir(context) : null;
 
         // 3. Discovered USB folders & USB .zip theme bundles
         for (String usbRoot : USB_ROOTS) {
@@ -187,7 +211,8 @@ public final class ThemePackManager {
 
             File single = new File(base, "pack");
             if (single.isDirectory() && new File(single, "layout.json").isFile()) {
-                PackEntry e = inspectDirectory(single, SourceType.USB, "usb".equals(sourceMode));
+                boolean isUsbActive = activeUsbDir != null && single.getAbsolutePath().equals(activeUsbDir.getAbsolutePath());
+                PackEntry e = inspectDirectory(single, SourceType.USB, isUsbActive);
                 if (e != null) out.add(e);
             }
 
@@ -200,7 +225,8 @@ public final class ThemePackManager {
                     Arrays.sort(children);
                     for (File child : children) {
                         if (child.isDirectory() && new File(child, "layout.json").isFile()) {
-                            PackEntry e = inspectDirectory(child, SourceType.USB, false);
+                            boolean isUsbActive = activeUsbDir != null && child.getAbsolutePath().equals(activeUsbDir.getAbsolutePath());
+                            PackEntry e = inspectDirectory(child, SourceType.USB, isUsbActive);
                             if (e != null) out.add(e);
                         } else if (isThemeZipFile(child)) {
                             out.add(inspectZipFile(child));
@@ -214,10 +240,7 @@ public final class ThemePackManager {
 
     public static Map<String, PackEntry> mapInstalledByStoreOrPackId(Context context) {
         Map<String, PackEntry> map = new HashMap<String, PackEntry>();
-        for (PackEntry e : discoverAllPacks(context)) {
-            if (e.sourceType != SourceType.INSTALLED && e.sourceType != SourceType.BUNDLED) {
-                continue;
-            }
+        for (PackEntry e : discoverInstalledOnly(context)) {
             if (!e.storeId.isEmpty()) {
                 map.put(e.storeId.toLowerCase(Locale.US), e);
             }
@@ -308,10 +331,11 @@ public final class ThemePackManager {
         File dst = new File(getInternalPacksRoot(context), safeId);
         File tmp = new File(getInternalPacksRoot(context), safeId + ".staging");
         deleteTree(tmp);
-        copyDirectorySafe(usbDir, tmp, 0);
+        long[] copyStats = new long[] { 0L, 0L }; // [fileCount, totalBytes]
+        copyDirectorySafe(usbDir, tmp, "", 0, copyStats);
         deleteTree(dst);
         if (!tmp.renameTo(dst)) {
-            copyDirectorySafe(tmp, dst, 0);
+            copyDirectorySafe(tmp, dst, "", 0, new long[] { 0L, 0L });
             deleteTree(tmp);
         }
         setActivePack(context, safeId, "auto");
@@ -365,11 +389,11 @@ public final class ThemePackManager {
     }
 
     private static PackEntry inspectZipFile(File zipFile) {
-        SafeThemeZipExtractor.ZipSummary s = SafeThemeZipExtractor.inspectSummary(zipFile);
+        SafeThemeZipExtractor.ZipSummary s = SafeThemeZipExtractor.inspectSummary(zipFile, false);
         String id = !s.id.isEmpty() ? s.id : zipFile.getName();
         return new PackEntry(id, s.id, s.name, s.author, s.version, s.revision,
                 s.category, s.description, s.formatVersion, SourceType.USB_ZIP,
-                null, zipFile, null, s.thumbnailBytes, false, s.error);
+                null, zipFile, null, null, false, s.error);
     }
 
     private static PackEntry inspectDirectory(File dir, SourceType srcType, boolean active) {
@@ -465,7 +489,7 @@ public final class ThemePackManager {
         return safeId;
     }
 
-    private static void copyDirectorySafe(File src, File dst, int depth) throws IOException {
+    private static void copyDirectorySafe(File src, File dst, String relPrefix, int depth, long[] stats) throws Exception {
         if (depth > 8 || src == null || !src.isDirectory()) {
             return;
         }
@@ -485,10 +509,24 @@ public final class ThemePackManager {
             if (!child.getAbsolutePath().equals(child.getCanonicalPath())) {
                 continue;
             }
+            String relPath = relPrefix.isEmpty() ? name : (relPrefix + "/" + name);
+            if (SafeThemeZipExtractor.shouldSkipJunkFile(relPath)) {
+                continue;
+            }
             File target = new File(dst, name);
             if (child.isDirectory()) {
-                copyDirectorySafe(child, target, depth + 1);
+                copyDirectorySafe(child, target, relPath, depth + 1, stats);
             } else if (child.isFile()) {
+                stats[0]++;
+                if (stats[0] > SafeThemeZipExtractor.MAX_ENTRY_COUNT) {
+                    throw new SecurityException("USB theme folder exceeds max " + SafeThemeZipExtractor.MAX_ENTRY_COUNT + " files.");
+                }
+                long len = child.length();
+                stats[1] += len;
+                if (stats[1] > SafeThemeZipExtractor.MAX_TOTAL_UNCOMPRESSED_BYTES) {
+                    throw new SecurityException("USB theme folder exceeds 150 MB total safety cap.");
+                }
+                SafeThemeZipExtractor.validateFolderFileAllowed(relPath, new FileInputStream(child), len);
                 FileInputStream in = new FileInputStream(child);
                 FileOutputStream out = new FileOutputStream(target);
                 try {

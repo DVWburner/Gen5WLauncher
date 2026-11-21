@@ -64,6 +64,11 @@ public final class MiniSvgDrawable extends Drawable {
         }
 
         @Override
+        public Drawable newDrawable(android.content.res.Resources res) {
+            return new MiniSvgDrawable(this);
+        }
+
+        @Override
         public int getChangingConfigurations() {
             return 0;
         }
@@ -447,17 +452,12 @@ public final class MiniSvgDrawable extends Drawable {
                 case 'A': {
                     float rx = tok.nextFloat();
                     float ry = tok.nextFloat();
-                    tok.nextFloat(); // x-axis-rotation
-                    tok.nextFloat(); // large-arc-flag
-                    tok.nextFloat(); // sweep-flag
+                    float xAxisRot = tok.nextFloat();
+                    boolean largeArc = tok.nextArcFlag();
+                    boolean sweep = tok.nextArcFlag();
                     float x = tok.nextFloat() + (rel ? cx : 0f);
                     float y = tok.nextFloat() + (rel ? cy : 0f);
-                    if (rx == 0f || ry == 0f) {
-                        path.lineTo(x, y);
-                    } else {
-                        // Gentle quad approximation when simple vector icons contain A commands
-                        path.lineTo(x, y);
-                    }
+                    arcToBeziers(path, cx, cy, rx, ry, xAxisRot, largeArc, sweep, x, y);
                     cx = x;
                     cy = y;
                     break;
@@ -467,6 +467,94 @@ public final class MiniSvgDrawable extends Drawable {
                     break;
             }
             lastCmd = cmd;
+        }
+    }
+
+    private static void arcToBeziers(Path path, float x0, float y0, float rxIn, float ryIn,
+            float angleDeg, boolean largeArcFlag, boolean sweepFlag, float x, float y) {
+        if ((x0 == x && y0 == y)) {
+            return;
+        }
+        float rx = Math.abs(rxIn);
+        float ry = Math.abs(ryIn);
+        if (rx <= 0.0001f || ry <= 0.0001f) {
+            path.lineTo(x, y);
+            return;
+        }
+        double phi = Math.toRadians(angleDeg % 360.0);
+        double cosPhi = Math.cos(phi);
+        double sinPhi = Math.sin(phi);
+
+        double dx2 = (x0 - x) * 0.5;
+        double dy2 = (y0 - y) * 0.5;
+        double x1p = cosPhi * dx2 + sinPhi * dy2;
+        double y1p = -sinPhi * dx2 + cosPhi * dy2;
+
+        double rxSq = (double) rx * rx;
+        double rySq = (double) ry * ry;
+        double x1pSq = x1p * x1p;
+        double y1pSq = y1p * y1p;
+
+        double radiiCheck = x1pSq / rxSq + y1pSq / rySq;
+        if (radiiCheck > 1.0) {
+            double scale = Math.sqrt(radiiCheck);
+            rx = (float) (scale * rx);
+            ry = (float) (scale * ry);
+            rxSq = (double) rx * rx;
+            rySq = (double) ry * ry;
+        }
+
+        double sign = (largeArcFlag == sweepFlag) ? -1.0 : 1.0;
+        double sq = ((rxSq * rySq) - (rxSq * y1pSq) - (rySq * x1pSq))
+                / ((rxSq * y1pSq) + (rySq * x1pSq));
+        double coef = sign * Math.sqrt(Math.max(0.0, sq));
+        double cxp = coef * ((rx * y1p) / ry);
+        double cyp = coef * -((ry * x1p) / rx);
+
+        double cx = cosPhi * cxp - sinPhi * cyp + (x0 + x) * 0.5;
+        double cy = sinPhi * cxp + cosPhi * cyp + (y0 + y) * 0.5;
+
+        double ux = (x1p - cxp) / rx;
+        double uy = (y1p - cyp) / ry;
+        double vx = (-x1p - cxp) / rx;
+        double vy = (-y1p - cyp) / ry;
+
+        double theta1 = Math.atan2(uy, ux);
+        double deltaTheta = Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy);
+        if (!sweepFlag && deltaTheta > 0) {
+            deltaTheta -= Math.PI * 2.0;
+        } else if (sweepFlag && deltaTheta < 0) {
+            deltaTheta += Math.PI * 2.0;
+        }
+
+        int segments = Math.max(1, (int) Math.ceil(Math.abs(deltaTheta) / (Math.PI * 0.5)));
+        double delta = deltaTheta / segments;
+        double t = (8.0 / 3.0) * Math.sin(delta * 0.25) * Math.sin(delta * 0.25) / Math.sin(delta * 0.5);
+
+        double curTheta = theta1;
+        double cosT1 = Math.cos(curTheta);
+        double sinT1 = Math.sin(curTheta);
+        for (int s = 0; s < segments; s++) {
+            double nextTheta = curTheta + delta;
+            double cosT2 = Math.cos(nextTheta);
+            double sinT2 = Math.sin(nextTheta);
+
+            double ep1x = cosT1 - t * sinT1;
+            double ep1y = sinT1 + t * cosT1;
+            double ep2x = cosT2 + t * sinT2;
+            double ep2y = sinT2 - t * cosT2;
+
+            float c1x = (float) (cx + cosPhi * rx * ep1x - sinPhi * ry * ep1y);
+            float c1y = (float) (cy + sinPhi * rx * ep1x + cosPhi * ry * ep1y);
+            float c2x = (float) (cx + cosPhi * rx * ep2x - sinPhi * ry * ep2y);
+            float c2y = (float) (cy + sinPhi * rx * ep2x + cosPhi * ry * ep2y);
+            float ex = (s == segments - 1) ? x : (float) (cx + cosPhi * rx * cosT2 - sinPhi * ry * sinT2);
+            float ey = (s == segments - 1) ? y : (float) (cy + sinPhi * rx * cosT2 + cosPhi * ry * sinT2);
+            path.cubicTo(c1x, c1y, c2x, c2y, ex, ey);
+
+            curTheta = nextTheta;
+            cosT1 = cosT2;
+            sinT1 = sinT2;
         }
     }
 
@@ -508,6 +596,18 @@ public final class MiniSvgDrawable extends Drawable {
             return (c >= '0' && c <= '9') || c == '-' || c == '+' || c == '.';
         }
 
+        boolean nextArcFlag() {
+            if (!skipSeparators()) {
+                return false;
+            }
+            char c = s.charAt(i);
+            if (c == '0' || c == '1') {
+                i++;
+                return c == '1';
+            }
+            return nextFloat() != 0f;
+        }
+
         float nextFloat() {
             if (!skipSeparators()) {
                 return 0f;
@@ -517,13 +617,20 @@ public final class MiniSvgDrawable extends Drawable {
                 i++;
             }
             boolean seenDot = false;
+            boolean seenExp = false;
             while (i < s.length()) {
                 char c = s.charAt(i);
                 if (c >= '0' && c <= '9') {
                     i++;
-                } else if (c == '.' && !seenDot) {
+                } else if (c == '.' && !seenDot && !seenExp) {
                     seenDot = true;
                     i++;
+                } else if ((c == 'e' || c == 'E') && !seenExp && i > start) {
+                    seenExp = true;
+                    i++;
+                    if (i < s.length() && (s.charAt(i) == '-' || s.charAt(i) == '+')) {
+                        i++;
+                    }
                 } else {
                     break;
                 }

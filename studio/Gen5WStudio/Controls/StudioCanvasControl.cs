@@ -43,6 +43,31 @@ public sealed class TelemetrySimState
     public string ConditioningState { get; set; } = "off";
     public bool DrivingRestricted { get; set; } = false;
     public int Battery12vSaver { get; set; } = 1;
+    public double HvRangeKm { get; set; } = 395;
+    public int ChargingRemainMin { get; set; } = 0;
+    public bool ClimateOn { get; set; } = true;
+    public bool ClimateAuto { get; set; } = true;
+    public bool ClimateAc { get; set; } = true;
+    public bool ClimateHeat { get; set; } = false;
+    public bool ClimateRecirc { get; set; } = false;
+    public bool ClimateSync { get; set; } = true;
+    public bool ClimateDriverOnly { get; set; } = false;
+    public bool ClimateFrontDefrost { get; set; } = false;
+    public bool ClimateRearOn { get; set; } = false;
+    public bool ClimateSmartVent { get; set; } = true;
+    public bool ClimateAutoDefog { get; set; } = true;
+    public bool ClimateAfterBlow { get; set; } = true;
+    public double ClimateDriverTempF { get; set; } = 72;
+    public double ClimatePassTempF { get; set; } = 72;
+    public int ClimateFanSpeed { get; set; } = 3;
+    public int ClimateVentMode { get; set; } = 1;
+    public int AudioVolume { get; set; } = 16;
+    public bool AudioMuted { get; set; } = false;
+    public bool DoorsLocked { get; set; } = true;
+    public bool AnyDoorOpen { get; set; } = false;
+    public bool TrunkOpen { get; set; } = false;
+    public bool HoodOpen { get; set; } = false;
+    public bool SunroofOpen { get; set; } = false;
 }
 
 /// <summary>
@@ -67,6 +92,7 @@ public sealed class StudioCanvasControl : Border
     private LayoutNodeModel? selectedNode;
     private readonly Dictionary<string, int> pagerActiveIndex = new();
     private readonly Dictionary<LayoutNodeModel, Rect> nodeRects = new();
+    private readonly Dictionary<LayoutNodeModel, Rect> panelInnerRects = new();
     private readonly Dictionary<LayoutNodeModel, LayoutNodeModel?> parentMap = new();
 
     private double scaleX = 1.0;
@@ -82,11 +108,15 @@ public sealed class StudioCanvasControl : Border
     private double backdropFps = 16;
     private DateTime lastFrameSwap = DateTime.UtcNow;
 
-    // Freeform drag/resize state (stores unscaled layout rects in viewport coords)
+    // Freeform drag/resize state (stores parent-inner-relative reference bounds so nested freeform panels never add parent offset)
+    private const double DragStartDeadzonePx = 3.0;
     private LayoutNodeModel? dragNode;
+    private LayoutNodeModel? dragParent;
     private int dragMode = 0; // 0=move, 1=BR resize
+    private bool dragThresholdMet = false;
     private Point dragStartCanvas;
-    private Rect dragStartRect;
+    private Rect dragStartLocalRefRect;
+    private Size dragParentInnerRefSize;
 
     public event Action<LayoutNodeModel?>? NodeSelected;
     public event Action? PackMutated;
@@ -249,6 +279,46 @@ public sealed class StudioCanvasControl : Border
         return false;
     }
 
+    public bool TryGetPanelInnerRefRect(LayoutNodeModel? panel, out Rect innerRefRect)
+    {
+        if (panel != null && panelInnerRects.TryGetValue(panel, out Rect inner))
+        {
+            double sx = scaleX > 0.01 ? scaleX : 1.0;
+            double sy = scaleY > 0.01 ? scaleY : 1.0;
+            innerRefRect = new Rect(inner.X / sx, inner.Y / sy, inner.Width / sx, inner.Height / sy);
+            return true;
+        }
+        innerRefRect = default;
+        return false;
+    }
+
+    /// <summary>
+    /// Returns the node's reference-space rectangle relative to its parent panel's inner content origin
+    /// (subtracting parent inner X/Y and the node's own left/top margin), matching freeform Bounds semantics.
+    /// </summary>
+    public bool TryGetNodeLocalRefRect(LayoutNodeModel? node, out Rect localRefRect)
+    {
+        if (node != null && nodeRects.TryGetValue(node, out Rect r))
+        {
+            double sx = scaleX > 0.01 ? scaleX : 1.0;
+            double sy = scaleY > 0.01 ? scaleY : 1.0;
+            double parentInnerX = 0;
+            double parentInnerY = 0;
+            if (parentMap.TryGetValue(node, out var par) && par != null && panelInnerRects.TryGetValue(par, out Rect pInner))
+            {
+                parentInnerX = pInner.X;
+                parentInnerY = pInner.Y;
+            }
+            int[] m = NormalizeInsets(node.MarginPx);
+            double localX = (r.X - parentInnerX - Sx(m[0])) / sx;
+            double localY = (r.Y - parentInnerY - Sy(m[1])) / sy;
+            localRefRect = new Rect(localX, localY, r.Width / sx, r.Height / sy);
+            return true;
+        }
+        localRefRect = default;
+        return false;
+    }
+
     public int GetPagerPageIndex(string pagerId) => pagerActiveIndex.TryGetValue(pagerId, out int idx) ? idx : 0;
 
     public void SetPagerPageIndex(string pagerId, int idx)
@@ -309,6 +379,7 @@ public sealed class StudioCanvasControl : Border
     {
         layoutLayer.Children.Clear();
         nodeRects.Clear();
+        panelInnerRects.Clear();
         parentMap.Clear();
         selectionOverlay.Children.Clear();
         if (pack == null) return;
@@ -499,6 +570,7 @@ public sealed class StudioCanvasControl : Border
             rect.Y + pT,
             Math.Max(1, rect.Width - pL - pR),
             Math.Max(1, rect.Height - pT - pB));
+        panelInnerRects[panel] = inner;
 
         var children = panel.Children ?? new List<LayoutNodeModel>();
         if (children.Count == 0) return;
@@ -563,13 +635,40 @@ public sealed class StudioCanvasControl : Border
             int rows = Math.Max(1, panel.Rows ?? 2);
             double cellW = (inner.Width - gap * (cols - 1)) / cols;
             double cellH = (inner.Height - gap * (rows - 1)) / rows;
-            int col = 0, row = 0;
+            int maxTrackRows = Math.Max(rows + 8, children.Count * 2 + 4);
+            bool[,] occupied = new bool[maxTrackRows, cols];
+            int cursorRow = 0, cursorCol = 0;
             foreach (var c in children)
             {
                 int[] m = NormalizeInsets(c.MarginPx);
                 int cs = Math.Min(cols, Math.Max(1, c.ColSpan ?? 1));
                 int rs = Math.Max(1, c.RowSpan ?? 1);
-                if (col + cs > cols) { row++; col = 0; }
+                while (cursorRow + rs < maxTrackRows)
+                {
+                    if (cursorCol + cs > cols)
+                    {
+                        cursorRow++;
+                        cursorCol = 0;
+                        continue;
+                    }
+                    bool fits = true;
+                    for (int rr = 0; rr < rs && fits; rr++)
+                    {
+                        for (int cc = 0; cc < cs; cc++)
+                        {
+                            if (occupied[cursorRow + rr, cursorCol + cc]) { fits = false; break; }
+                        }
+                    }
+                    if (fits) break;
+                    cursorCol++;
+                }
+                int row = cursorRow;
+                int col = cursorCol;
+                for (int rr = 0; rr < rs && row + rr < maxTrackRows; rr++)
+                {
+                    for (int cc = 0; cc < cs && col + cc < cols; cc++)
+                        occupied[row + rr, col + cc] = true;
+                }
                 double boxX = inner.X + col * (cellW + gap) + Sx(m[0]);
                 double boxY = inner.Y + row * (cellH + gap) + Sy(m[1]);
                 double availW = Math.Max(1, cellW * cs + gap * (cs - 1) - Sx(m[0] + m[2]));
@@ -589,8 +688,8 @@ public sealed class StudioCanvasControl : Border
                     _ => boxY
                 };
                 RenderNode(c, panel, new Rect(cx, cy, cw, ch));
-                col += cs;
-                if (col >= cols) { col = 0; row++; }
+                cursorCol = col + cs;
+                if (cursorCol >= cols) { cursorCol = 0; cursorRow++; }
             }
             return;
         }
@@ -781,13 +880,14 @@ public sealed class StudioCanvasControl : Border
     private UIElement BuildWidgetContent(LayoutNodeModel w, Rect rect)
     {
         string kind = w.Kind ?? "tile";
-        Color accent = ParseColor(w.Style?.AccentColor, Color.FromRgb(56, 189, 248));
+        Color tokenAccent = ParseColor(pack?.Tokens?.AccentColor, Color.FromRgb(56, 189, 248));
+        Color accent = ParseColor(w.Style?.AccentColor, tokenAccent);
         Color txtCol = ParseColor(w.Style?.TextColor, Colors.White);
         Color subCol = ParseColor(w.Style?.SubTextColor, Color.FromRgb(148, 163, 184));
         FontFamily fontFam = workspace?.ResolveFontFamily(w.Style?.FontFamily) ?? new FontFamily("Segoe UI");
         FontStyle fontStyle = w.Style?.FontItalic == true ? FontStyles.Italic : FontStyles.Normal;
         FontWeight titleWeight = ResolveFontWeight(w.Style?.FontWeight, defaultBold: true);
-        FontWeight subWeight = ResolveFontWeight(w.Style?.FontWeight, defaultBold: false);
+        FontWeight subWeight = FontWeights.Normal;
 
         if (kind is "text" or "sensor" or "label")
         {
@@ -998,13 +1098,13 @@ public sealed class StudioCanvasControl : Border
                 : (parsedBorder.HasValue && (parsedBorder.Value.A != 0 || parsedBorder.Value.R != 0 || parsedBorder.Value.G != 0 || parsedBorder.Value.B != 0)
                     ? parsedBorder.Value
                     : defaultTrackCol);
-            double sz = Smin(w.Style?.IconSizePx ?? 96);
+            double sz = Smin(w.Style?.IconSizePx ?? 88);
             string centerTxt = ResolveSimValue(k, u);
 
             var sp = new StackPanel { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
             sp.Children.Add(BuildRingVisual(sz, pct, centerTxt, ringCol, txtCol, trackCol, fontFam));
             if (!string.IsNullOrWhiteSpace(w.Title))
-                sp.Children.Add(new TextBlock { Text = w.Title, Foreground = new SolidColorBrush(txtCol), FontFamily = fontFam, FontStyle = fontStyle, FontSize = Smin(w.Style?.TitleSizePx ?? 18), FontWeight = titleWeight, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, Sy(8), 0, 0) });
+                sp.Children.Add(new TextBlock { Text = w.Title, Foreground = new SolidColorBrush(txtCol), FontFamily = fontFam, FontStyle = fontStyle, FontSize = Smin(w.Style?.TitleSizePx ?? 17), FontWeight = titleWeight, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, Sy(8), 0, 0) });
             if (!string.IsNullOrWhiteSpace(w.Subtitle))
                 sp.Children.Add(new TextBlock { Text = w.Subtitle, Foreground = new SolidColorBrush(subCol), FontFamily = fontFam, FontStyle = fontStyle, FontSize = Smin(w.Style?.SubtitleSizePx ?? 13), HorizontalAlignment = HorizontalAlignment.Center });
             return sp;
@@ -1013,14 +1113,14 @@ public sealed class StudioCanvasControl : Border
         {
             var sp = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(Sx(28), Sy(24), Sx(28), Sy(24)) };
             var hdr = new StackPanel { Orientation = Orientation.Horizontal };
-            if (LoadIconElement(w, Smin(44)) is UIElement ic)
+            if (LoadIconElement(w, Smin(w.Style?.IconSizePx ?? 44)) is UIElement ic)
             {
                 if (ic is FrameworkElement fe) fe.Margin = new Thickness(0, 0, Sx(14), 0);
                 hdr.Children.Add(ic);
             }
             var tCol = new StackPanel();
-            tCol.Children.Add(new TextBlock { Text = w.Title ?? "IONIQ 5 TELEMETRY", Foreground = new SolidColorBrush(txtCol), FontFamily = fontFam, FontSize = Smin(22), FontWeight = titleWeight });
-            tCol.Children.Add(new TextBlock { Text = sim.Charging ? "CHARGING ACTIVE" : (sim.Ready ? "EV READY" : "STANDBY"), Foreground = new SolidColorBrush(accent), FontFamily = fontFam, FontSize = Smin(15) });
+            tCol.Children.Add(new TextBlock { Text = w.Title ?? "IONIQ 5 TELEMETRY", Foreground = new SolidColorBrush(txtCol), FontFamily = fontFam, FontStyle = fontStyle, FontSize = Smin(w.Style?.TitleSizePx ?? 22), FontWeight = titleWeight });
+            tCol.Children.Add(new TextBlock { Text = sim.Charging ? "CHARGING ACTIVE" : (sim.Ready ? "EV READY" : "STANDBY"), Foreground = new SolidColorBrush(accent), FontFamily = fontFam, FontStyle = fontStyle, FontSize = Smin(w.Style?.SubtitleSizePx ?? 15) });
             hdr.Children.Add(tCol);
             sp.Children.Add(hdr);
             sp.Children.Add(new TextBlock { Text = $"{sim.HvSoc:0}%", Foreground = Brushes.White, FontFamily = fontFam, FontSize = Smin(86), FontWeight = FontWeights.Bold, Margin = new Thickness(0, Sy(16), 0, Sy(10)) });
@@ -1033,6 +1133,16 @@ public sealed class StudioCanvasControl : Border
                 ? $"{Math.Round(sim.OdometerKm * 0.621371):0} mi"
                 : $"{sim.OdometerKm} km";
             sp.Children.Add(new TextBlock { Text = $"12V AUX {sim.Aux12vSoc:0}%   \u2022   EXT {extHeroStr}   \u2022   ODO {odoHeroStr}", Foreground = new SolidColorBrush(subCol), FontSize = Smin(17) });
+            if (w.Action != null && !string.IsNullOrWhiteSpace(w.Action.Type) && !"none".Equals(w.Action.Type, StringComparison.OrdinalIgnoreCase))
+            {
+                sp.Children.Add(new TextBlock
+                {
+                    Text = "Tap anywhere on card to open EV & Energy Screen \u2192",
+                    Foreground = new SolidColorBrush(Color.FromArgb(180, accent.R, accent.G, accent.B)),
+                    FontSize = Smin(13),
+                    Margin = new Thickness(0, Sy(8), 0, 0)
+                });
+            }
             return sp;
         }
         if (kind == "action_pill")
@@ -1044,10 +1154,18 @@ public sealed class StudioCanvasControl : Border
                 sp.Children.Add(ic);
             }
             var tCol = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-            tCol.Children.Add(new TextBlock { Text = w.Title ?? "", Foreground = new SolidColorBrush(txtCol), FontFamily = fontFam, FontStyle = fontStyle, FontSize = Smin(w.Style?.TitleSizePx ?? 19), FontWeight = titleWeight });
+            bool hasTitleBind = ContainsToken(w.Title) || (string.IsNullOrWhiteSpace(w.Title) && !string.IsNullOrWhiteSpace(w.TelemetryKey));
+            string pillTitle = hasTitleBind
+                ? FormatDynamicText(w.Title, w.TelemetryKey, w.Unit, true)
+                : (w.Title ?? "");
+            tCol.Children.Add(new TextBlock { Text = pillTitle, Foreground = new SolidColorBrush(txtCol), FontFamily = fontFam, FontStyle = fontStyle, FontSize = Smin(w.Style?.TitleSizePx ?? 19), FontWeight = titleWeight });
+
             string? subTxt = w.Action?.Type == "toggle_bar"
                 ? (pack?.Tokens.ShowSystemBar == true ? "Bar Shown (630p)" : "Full 1920x720")
                 : w.Subtitle;
+            bool autoSubSensor = !string.IsNullOrWhiteSpace(w.TelemetryKey) && string.IsNullOrWhiteSpace(subTxt) && !hasTitleBind;
+            if (ContainsToken(subTxt) || autoSubSensor)
+                subTxt = FormatDynamicText(subTxt, w.TelemetryKey, w.Unit, autoSubSensor);
             if (!string.IsNullOrWhiteSpace(subTxt))
                 tCol.Children.Add(new TextBlock { Text = subTxt, Foreground = new SolidColorBrush(accent), FontFamily = fontFam, FontStyle = fontStyle, FontSize = Smin(w.Style?.SubtitleSizePx ?? 13) });
             sp.Children.Add(tCol);
@@ -1068,31 +1186,97 @@ public sealed class StudioCanvasControl : Border
                 tileGrid.Children.Add(new Border { Background = new SolidColorBrush(Color.FromArgb(dimA, 6, 11, 18)) });
             }
         }
-        bool center = "center".Equals(w.Style?.TextAlign, StringComparison.OrdinalIgnoreCase);
+        var tileHAlign = ResolveTextAlignment(w.Style?.TextAlign, HorizontalAlignment.Left);
+        var tileTxtAlign = ToTextAlignment(w.Style?.TextAlign);
+        int[] tilePad = w.Style?.PaddingPx is { Length: >= 4 } ? w.Style.PaddingPx : new[] { 24, 18, 24, 18 };
         var innerSp = new StackPanel
         {
             VerticalAlignment = ResolveVerticalAlignment(w.Style?.VerticalAlign, VerticalAlignment.Center),
-            HorizontalAlignment = center ? HorizontalAlignment.Center : HorizontalAlignment.Left,
-            Margin = new Thickness(Sx(24), Sy(18), Sx(24), Sy(18))
+            HorizontalAlignment = tileHAlign,
+            Margin = new Thickness(Sx(tilePad[0]), Sy(tilePad[1]), Sx(tilePad[2]), Sy(tilePad[3]))
         };
         if (LoadIconElement(w, Smin(w.Style?.IconSizePx ?? 54)) is UIElement tileIc)
         {
             if (tileIc is FrameworkElement fe)
             {
-                fe.HorizontalAlignment = center ? HorizontalAlignment.Center : HorizontalAlignment.Left;
+                fe.HorizontalAlignment = tileHAlign;
                 fe.Margin = new Thickness(0, 0, 0, Sy(14));
             }
             innerSp.Children.Add(tileIc);
         }
-        innerSp.Children.Add(new TextBlock { Text = w.Title ?? w.Id, Foreground = new SolidColorBrush(txtCol), FontFamily = fontFam, FontStyle = fontStyle, FontSize = Smin(w.Style?.TitleSizePx ?? 26), FontWeight = titleWeight, TextTrimming = TextTrimming.CharacterEllipsis, HorizontalAlignment = center ? HorizontalAlignment.Center : HorizontalAlignment.Left });
-        if (!string.IsNullOrWhiteSpace(w.Subtitle))
-            innerSp.Children.Add(new TextBlock { Text = w.Subtitle, Foreground = new SolidColorBrush(subCol), FontFamily = fontFam, FontStyle = fontStyle, FontSize = Smin(w.Style?.SubtitleSizePx ?? 16), Margin = new Thickness(0, Sy(4), 0, 0), TextTrimming = TextTrimming.CharacterEllipsis, HorizontalAlignment = center ? HorizontalAlignment.Center : HorizontalAlignment.Left });
+        bool tileTitleBind = ContainsToken(w.Title) || (string.IsNullOrWhiteSpace(w.Title) && !string.IsNullOrWhiteSpace(w.TelemetryKey));
+        string tileTitle = tileTitleBind
+            ? FormatDynamicText(w.Title, w.TelemetryKey, w.Unit, true)
+            : (w.Title ?? w.Id);
+        innerSp.Children.Add(new TextBlock
+        {
+            Text = tileTitle,
+            Foreground = new SolidColorBrush(txtCol),
+            FontFamily = fontFam,
+            FontStyle = fontStyle,
+            FontSize = Smin(w.Style?.TitleSizePx ?? 26),
+            FontWeight = titleWeight,
+            TextWrapping = w.WrapText == true ? TextWrapping.Wrap : TextWrapping.NoWrap,
+            TextTrimming = w.WrapText == true ? TextTrimming.None : TextTrimming.CharacterEllipsis,
+            TextAlignment = tileTxtAlign,
+            HorizontalAlignment = tileHAlign
+        });
+        string? tileSub = w.Subtitle;
+        bool tileAutoSub = !string.IsNullOrWhiteSpace(w.TelemetryKey) && string.IsNullOrWhiteSpace(tileSub) && !tileTitleBind;
+        if (ContainsToken(tileSub) || tileAutoSub)
+            tileSub = FormatDynamicText(tileSub, w.TelemetryKey, w.Unit, tileAutoSub);
+        if (!string.IsNullOrWhiteSpace(tileSub))
+        {
+            innerSp.Children.Add(new TextBlock
+            {
+                Text = tileSub,
+                Foreground = new SolidColorBrush(subCol),
+                FontFamily = fontFam,
+                FontStyle = fontStyle,
+                FontWeight = subWeight,
+                FontSize = Smin(w.Style?.SubtitleSizePx ?? 16),
+                Margin = new Thickness(0, Sy(4), 0, 0),
+                TextWrapping = w.WrapText == true ? TextWrapping.Wrap : TextWrapping.NoWrap,
+                TextTrimming = w.WrapText == true ? TextTrimming.None : TextTrimming.CharacterEllipsis,
+                TextAlignment = tileTxtAlign,
+                HorizontalAlignment = tileHAlign
+            });
+        }
         tileGrid.Children.Add(innerSp);
+        if (!string.IsNullOrWhiteSpace(w.BadgeText))
+        {
+            string badgeTxt = ContainsToken(w.BadgeText)
+                ? FormatDynamicText(w.BadgeText, w.TelemetryKey, w.Unit, false)
+                : w.BadgeText!;
+            tileGrid.Children.Add(new Border
+            {
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(0, Sy(14), Sx(14), 0),
+                Padding = new Thickness(Sx(10), Sy(3), Sx(10), Sy(3)),
+                CornerRadius = new CornerRadius(Smin(999)),
+                Background = new SolidColorBrush(Color.FromArgb(52, accent.R, accent.G, accent.B)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(140, accent.R, accent.G, accent.B)),
+                BorderThickness = new Thickness(Math.Max(1, Smin(1))),
+                Child = new TextBlock
+                {
+                    Text = badgeTxt,
+                    Foreground = new SolidColorBrush(accent),
+                    FontFamily = fontFam,
+                    FontWeight = FontWeights.Bold,
+                    FontSize = Smin(12)
+                }
+            });
+        }
         return tileGrid;
     }
 
     private UIElement? LoadIconElement(LayoutNodeModel w, double sizePx)
-        => LoadAssetVisual(w.Icon, w.Style?.IconTint, sizePx, cover: false);
+    {
+        string? iconRef = !string.IsNullOrWhiteSpace(w.AnimIcon) ? w.AnimIcon
+                        : (!string.IsNullOrWhiteSpace(w.BitmapAsset) ? w.BitmapAsset : w.Icon);
+        return LoadAssetVisual(iconRef, w.Style?.IconTint, sizePx, cover: false);
+    }
 
     private UIElement? LoadAssetVisual(string? relRef, string? tintHex, double fixedSizePx, bool cover)
     {
@@ -1165,7 +1349,9 @@ public sealed class StudioCanvasControl : Border
             if (close < 0) { sb.Append(working, pos, working.Length - pos); break; }
             sb.Append(working, pos, open - pos);
             string tok = working.Substring(open + 1, close - open - 1).Trim();
-            sb.Append(string.IsNullOrEmpty(tok) ? "" : ResolveSimValue(tok, unitOverride));
+            bool sameAsPrimary = !string.IsNullOrWhiteSpace(primaryKey)
+                                 && CanonicalSensorKey(tok).Equals(CanonicalSensorKey(primaryKey), StringComparison.OrdinalIgnoreCase);
+            sb.Append(string.IsNullOrEmpty(tok) ? "" : ResolveSimValue(tok, sameAsPrimary ? unitOverride : null));
             pos = close + 1;
         }
         return sb.ToString();
@@ -1177,10 +1363,12 @@ public sealed class StudioCanvasControl : Border
     private bool ShouldUseMph(string rawKey, string unitOverride)
     {
         if (rawKey.Equals("speed_mph", StringComparison.OrdinalIgnoreCase)
-            || rawKey.Equals("odometer_mi", StringComparison.OrdinalIgnoreCase))
+            || rawKey.Equals("odometer_mi", StringComparison.OrdinalIgnoreCase)
+            || rawKey.Equals("hv.range_mi", StringComparison.OrdinalIgnoreCase))
             return true;
         if (rawKey.Equals("speed_kmh", StringComparison.OrdinalIgnoreCase)
-            || rawKey.Equals("odometer_km", StringComparison.OrdinalIgnoreCase))
+            || rawKey.Equals("odometer_km", StringComparison.OrdinalIgnoreCase)
+            || rawKey.Equals("hv.range_km", StringComparison.OrdinalIgnoreCase))
             return false;
         if (unitOverride.Contains("mph", StringComparison.OrdinalIgnoreCase)
             || unitOverride.Equals("mi", StringComparison.OrdinalIgnoreCase))
@@ -1207,6 +1395,8 @@ public sealed class StudioCanvasControl : Border
         if (k == "hv.battery_temp_min") return ShouldPackTempUseFahrenheit(raw, u) ? 0 : -20;
         if (k == "outside_temp") return u.Contains('F', StringComparison.OrdinalIgnoreCase) ? -20 : -30;
         if (k == "outside_temp_f") return u.Contains('C', StringComparison.OrdinalIgnoreCase) ? -30 : -20;
+        if (k is "climate.driver_temp" or "climate.passenger_temp")
+            return (u.Contains('C', StringComparison.OrdinalIgnoreCase) || (string.IsNullOrEmpty(u) && PreferCelsius)) ? 17 : 60;
         if (k == "steering.angle") return -540;
         return 0;
     }
@@ -1220,15 +1410,40 @@ public sealed class StudioCanvasControl : Border
         if (k == "outside_temp") return u.Contains('F', StringComparison.OrdinalIgnoreCase) ? 120 : 50;
         if (k == "outside_temp_f") return u.Contains('C', StringComparison.OrdinalIgnoreCase) ? 50 : 120;
         if (k is "speed" or "gear_speed") return ShouldUseMph(raw, u) ? 120 : 180;
+        if (k == "odometer") return ShouldUseMph(raw, u) ? 200000 : 300000;
+        if (k == "hv.range") return ShouldUseMph(raw, u) ? 350 : 550;
+        if (k == "charging.remain_min") return 600;
+        if (k is "climate.driver_temp" or "climate.passenger_temp")
+            return (u.Contains('C', StringComparison.OrdinalIgnoreCase) || (string.IsNullOrEmpty(u) && PreferCelsius)) ? 32 : 90;
+        if (k == "climate.fan_speed") return 8;
+        if (k == "climate.auto_level") return 3;
+        if (k == "climate.vent_mode") return 10;
+        if (k == "audio.volume") return 45;
         if (k == "steering.angle") return 540;
+        if (k == "energy.drivetrain_kw") return 250;
+        if (k is "energy.climate_kw" or "energy.care_kw") return 10;
+        if (k == "energy.electronics_w") return 1500;
+        if (k.StartsWith("tyre.") && k.EndsWith("_psi")) return 60;
         if (k.StartsWith("seat_heat.") || k.StartsWith("seat_vent.")) return 3;
-        if (k is "wheel_heat" or "defogger" or "charging" or "hv.ready" or "gear.park" or "parking_brake" or "moving") return 1;
+        if (k is "hv.conditioning" or "hv.plug_state") return 2;
+        if (k.StartsWith("door.") || k.StartsWith("window.") || k.StartsWith("tyre.")) return 1;
+        if (k is "wheel_heat" or "defogger" or "charging" or "hv.ready" or "hv.v2l_active" or "gear.park" or "parking_brake"
+            or "moving" or "hv.conditioning_active" or "conditioning.state" or "driving.restricted" or "guide_lines"
+            or "climate.on" or "climate.auto" or "climate.ac" or "climate.heat" or "climate.rear_on"
+            or "climate.rear_lock" or "climate.air_clean" or "climate.temp_unit"
+            or "climate.recirc" or "climate.sync" or "climate.driver_only" or "climate.front_defrost"
+            or "climate.smart_vent" or "climate.auto_defog" or "climate.after_blow" or "battery12v.saver"
+            or "audio.muted" or "trunk.open" or "trunk.ptg_state" or "charge_door.open" or "hood.open" or "sunroof.open")
+            return 1;
         return 100;
     }
 
     private static string CanonicalSensorKey(string? key) => (key ?? "").Trim() switch
     {
         "hv_soc" => "hv.soc",
+        "hv_range" => "hv.range",
+        "hv.range_mi" => "hv.range",
+        "hv.range_km" => "hv.range",
         "aux12v_soc" => "battery12v.soc",
         "outside_temp_c" => "outside_temp",
         "hv_ready" => "hv.ready",
@@ -1236,6 +1451,10 @@ public sealed class StudioCanvasControl : Border
         "driving_restricted" => "driving.restricted",
         "hv.battery_temp_min_f" => "hv.battery_temp_min",
         "hv.battery_temp_min_c" => "hv.battery_temp_min",
+        "climate_temp_driver" => "climate.driver_temp",
+        "climate_temp_passenger" => "climate.passenger_temp",
+        "climate_fan" => "climate.fan_speed",
+        "volume" => "audio.volume",
         "speed_mph" => "speed",
         "speed_kmh" => "speed",
         "odometer_mi" => "odometer",
@@ -1252,6 +1471,8 @@ public sealed class StudioCanvasControl : Border
         switch (k)
         {
             case "hv.soc": return sim.HvSoc;
+            case "hv.range": return ShouldUseMph(raw, u) ? sim.HvRangeKm * 0.621371 : sim.HvRangeKm;
+            case "charging.remain_min": return sim.ChargingRemainMin;
             case "battery12v.soc": return sim.Aux12vSoc;
             case "hv.health": return sim.HvHealth;
             case "hv.battery_temp_min":
@@ -1270,6 +1491,65 @@ public sealed class StudioCanvasControl : Border
             case "steering.angle": return sim.SteeringAngleDeg;
             case "pedal.accel": return sim.AccelPedal;
             case "brake.pressure": return sim.BrakePressure;
+            case "climate.driver_temp":
+                return (u.Contains('C', StringComparison.OrdinalIgnoreCase) || (string.IsNullOrEmpty(u) && PreferCelsius))
+                    ? (sim.ClimateDriverTempF - 32.0) * 5.0 / 9.0
+                    : sim.ClimateDriverTempF;
+            case "climate.passenger_temp":
+                return (u.Contains('C', StringComparison.OrdinalIgnoreCase) || (string.IsNullOrEmpty(u) && PreferCelsius))
+                    ? (sim.ClimatePassTempF - 32.0) * 5.0 / 9.0
+                    : sim.ClimatePassTempF;
+            case "climate.fan_speed": return sim.ClimateFanSpeed;
+            case "climate.auto_level": return sim.ClimateAuto ? 1 : 0;
+            case "climate.vent_mode": return sim.ClimateVentMode;
+            case "climate.on": return sim.ClimateOn ? 1 : 0;
+            case "climate.auto": return sim.ClimateAuto ? 1 : 0;
+            case "climate.ac": return sim.ClimateAc ? 1 : 0;
+            case "climate.heat": return sim.ClimateHeat ? 1 : 0;
+            case "climate.recirc": return sim.ClimateRecirc ? 1 : 0;
+            case "climate.sync": return sim.ClimateSync ? 1 : 0;
+            case "climate.driver_only": return sim.ClimateDriverOnly ? 1 : 0;
+            case "climate.front_defrost": return sim.ClimateFrontDefrost ? 1 : 0;
+            case "climate.rear_on": return sim.ClimateRearOn ? 1 : 0;
+            case "climate.rear_lock": return 0;
+            case "climate.air_clean": return 0;
+            case "climate.temp_unit": return PreferCelsius ? 0 : 1;
+            case "climate.smart_vent": return sim.ClimateSmartVent ? 1 : 0;
+            case "climate.auto_defog": return sim.ClimateAutoDefog ? 1 : 0;
+            case "climate.after_blow": return sim.ClimateAfterBlow ? 1 : 0;
+            case "audio.volume": return sim.AudioVolume;
+            case "audio.muted": return sim.AudioMuted ? 1 : 0;
+            case "door.lock_state":
+            case "door.lock.fl":
+            case "door.lock.fr":
+            case "door.lock.rl":
+            case "door.lock.rr": return sim.DoorsLocked ? 1 : 0;
+            case "door.any_open": return sim.AnyDoorOpen ? 1 : 0;
+            case "door.fl":
+            case "door.fr":
+            case "door.rl":
+            case "door.rr":
+            case "window.fl":
+            case "window.fr":
+            case "window.rl":
+            case "window.rr": return 0;
+            case "trunk.open":
+            case "trunk.ptg_state": return sim.TrunkOpen ? 1 : 0;
+            case "charge_door.open": return 0;
+            case "hood.open": return sim.HoodOpen ? 1 : 0;
+            case "sunroof.open": return sim.SunroofOpen ? 1 : 0;
+            case "tyre.fl_status":
+            case "tyre.fr_status":
+            case "tyre.rl_status":
+            case "tyre.rr_status": return 0;
+            case "tyre.fl_psi":
+            case "tyre.fr_psi":
+            case "tyre.rl_psi":
+            case "tyre.rr_psi": return 36;
+            case "energy.drivetrain_kw": return 12.4;
+            case "energy.climate_kw": return 1.1;
+            case "energy.electronics_w": return 340;
+            case "energy.care_kw": return 0.0;
             case "seat_heat.driver": return sim.DriverSeatHeat;
             case "seat_heat.passenger": return sim.PassengerSeatHeat;
             case "seat_heat.rear_left": return sim.RearLeftSeatHeat;
@@ -1279,11 +1559,14 @@ public sealed class StudioCanvasControl : Border
             case "wheel_heat": return sim.WheelHeat ? 1 : 0;
             case "defogger": return sim.Defogger ? 1 : 0;
             case "charging": return sim.Charging ? 1 : 0;
+            case "hv.plug_state": return sim.Charging ? 1 : 0;
+            case "hv.v2l_active": return 0;
             case "hv.ready": return sim.Ready ? 1 : 0;
             case "hv.conditioning": return 2;
             case "hv.conditioning_active": return sim.ConditioningActive ? 1 : 0;
             case "gear.park": return sim.InPark ? 1 : 0;
             case "parking_brake": return sim.ParkingBrake ? 1 : 0;
+            case "guide_lines": return 1;
             case "moving": return !sim.InPark && sim.SpeedKmh > 0 ? 1 : 0;
             case "driving.restricted": return sim.DrivingRestricted ? 1 : 0;
             case "battery12v.saver": return sim.Battery12vSaver;
@@ -1295,6 +1578,15 @@ public sealed class StudioCanvasControl : Border
 
     private static string FormatLevel(int level) => level <= 0 ? "OFF" : level == 1 ? "LOW" : level == 2 ? "MED" : "HIGH";
 
+    private string FormatSimClimateTemp(double tempF, string u)
+    {
+        bool useC = u.Contains('C', StringComparison.OrdinalIgnoreCase) || (string.IsNullOrEmpty(u) && PreferCelsius);
+        string suffix = string.IsNullOrEmpty(u) ? (useC ? "\u00B0C" : "\u00B0F") : u;
+        return useC
+            ? $"{Math.Round((tempF - 32.0) * 5.0 / 9.0):0}{suffix}"
+            : $"{Math.Round(tempF):0}{suffix}";
+    }
+
     private string ResolveSimValue(string? key, string? unitOverride = null)
     {
         string rawKey = (key ?? "").Trim();
@@ -1303,6 +1595,10 @@ public sealed class StudioCanvasControl : Border
         return k switch
         {
             "hv.soc" => $"{sim.HvSoc:0}{(string.IsNullOrEmpty(u) ? "%" : u)}",
+            "hv.range" => ShouldUseMph(rawKey, u)
+                ? $"{Math.Round(sim.HvRangeKm * 0.621371):0} {(string.IsNullOrEmpty(u) ? "mi" : u)}"
+                : $"{sim.HvRangeKm:0} {(string.IsNullOrEmpty(u) ? "km" : u)}",
+            "charging.remain_min" => sim.ChargingRemainMin > 0 ? $"{sim.ChargingRemainMin}{(string.IsNullOrEmpty(u) ? "m" : u)}" : "--",
             "battery12v.soc" => $"{sim.Aux12vSoc:0}{(string.IsNullOrEmpty(u) ? "%" : u)}",
             "hv.health" => $"{sim.HvHealth}{u}",
             "hv.battery_temp_min" => ShouldPackTempUseFahrenheit(rawKey, u)
@@ -1329,17 +1625,68 @@ public sealed class StudioCanvasControl : Border
             "parking_brake" => sim.ParkingBrake ? "EPB ON" : "RELEASED",
             "moving" => (!sim.InPark && sim.SpeedKmh > 0) ? "MOVING" : "STOPPED",
             "charging" => sim.Charging ? "CHARGING" : "IDLE",
+            "hv.plug_state" => sim.Charging ? "PLUGGED" : "UNPLUGGED",
+            "hv.v2l_active" => "OFF",
             "hv.ready" => sim.Ready ? "READY" : "STANDBY",
             "hv.conditioning" => "ON",
             "hv.conditioning_active" => sim.ConditioningActive ? "HEATING" : "IDLE",
             "conditioning.state" => sim.ConditioningState,
             "driving.restricted" => sim.DrivingRestricted ? "LOCKED" : "OPEN",
+            "guide_lines" => "ON",
             "battery12v.saver" => $"{sim.Battery12vSaver}{u}",
             "wheel_heat" => sim.WheelHeat ? "ON" : "OFF",
             "defogger" => sim.Defogger ? "ON" : "OFF",
             "steering.angle" => $"{sim.SteeringAngleDeg:0}{(string.IsNullOrEmpty(u) ? "\u00B0" : u)}",
-            "pedal.accel" => $"{sim.AccelPedal:0}{u}",
+            "pedal.accel" => $"{sim.AccelPedal:0}{(string.IsNullOrEmpty(u) ? "%" : u)}",
             "brake.pressure" => $"{sim.BrakePressure:0}{u}",
+            "climate.on" => sim.ClimateOn ? "ON" : "OFF",
+            "climate.auto" => sim.ClimateAuto ? "ON" : "OFF",
+            "climate.auto_level" => sim.ClimateAuto ? "LVL 1" : "OFF",
+            "climate.ac" => sim.ClimateAc ? "ON" : "OFF",
+            "climate.heat" => sim.ClimateHeat ? "ON" : "OFF",
+            "climate.temp_unit" => PreferCelsius ? "C" : "F",
+            "climate.recirc" => sim.ClimateRecirc ? "ON" : "OFF",
+            "climate.sync" => sim.ClimateSync ? "ON" : "OFF",
+            "climate.driver_only" => sim.ClimateDriverOnly ? "ON" : "OFF",
+            "climate.front_defrost" => sim.ClimateFrontDefrost ? "ON" : "OFF",
+            "climate.rear_on" => sim.ClimateRearOn ? "ON" : "OFF",
+            "climate.rear_lock" => "OFF",
+            "climate.air_clean" => "OFF",
+            "climate.smart_vent" => sim.ClimateSmartVent ? "ON" : "OFF",
+            "climate.auto_defog" => sim.ClimateAutoDefog ? "ON" : "OFF",
+            "climate.after_blow" => sim.ClimateAfterBlow ? "ON" : "OFF",
+            "climate.driver_temp" => FormatSimClimateTemp(sim.ClimateDriverTempF, u),
+            "climate.passenger_temp" => FormatSimClimateTemp(sim.ClimatePassTempF, u),
+            "climate.fan_speed" => string.IsNullOrEmpty(u)
+                ? (sim.ClimateFanSpeed <= 0 ? "OFF" : $"LVL {sim.ClimateFanSpeed}")
+                : $"{sim.ClimateFanSpeed}{u}",
+            "climate.vent_mode" => sim.ClimateVentMode switch
+            {
+                0 => "AUTO",
+                1 => "FACE",
+                2 => "BI-LVL",
+                3 => "FLOOR",
+                4 => "FLR+DEF",
+                5 or 10 => "DEFROST",
+                _ => $"M{sim.ClimateVentMode}"
+            },
+            "audio.volume" => $"{sim.AudioVolume}{u}",
+            "audio.muted" => sim.AudioMuted ? "MUTED" : "ACTIVE",
+            "door.lock_state" or "door.lock.fl" or "door.lock.fr" or "door.lock.rl" or "door.lock.rr"
+                => sim.DoorsLocked ? "LOCKED" : "UNLOCKED",
+            "door.any_open" => sim.AnyDoorOpen ? "DOOR OPEN" : "ALL CLOSED",
+            "door.fl" or "door.fr" or "door.rl" or "door.rr" => "CLOSED",
+            "window.fl" or "window.fr" or "window.rl" or "window.rr" => "CLOSED",
+            "trunk.open" or "trunk.ptg_state" => sim.TrunkOpen ? "OPEN" : "CLOSED",
+            "charge_door.open" => "CLOSED",
+            "hood.open" => sim.HoodOpen ? "OPEN" : "CLOSED",
+            "sunroof.open" => sim.SunroofOpen ? "OPEN" : "CLOSED",
+            "tyre.fl_status" or "tyre.fr_status" or "tyre.rl_status" or "tyre.rr_status" => "OK",
+            "tyre.fl_psi" or "tyre.fr_psi" or "tyre.rl_psi" or "tyre.rr_psi" => $"36 {(string.IsNullOrEmpty(u) ? "psi" : u)}",
+            "energy.drivetrain_kw" => $"12.4 {(string.IsNullOrEmpty(u) ? "kW" : u)}",
+            "energy.climate_kw" => $"1.1 {(string.IsNullOrEmpty(u) ? "kW" : u)}",
+            "energy.electronics_w" => $"340 {(string.IsNullOrEmpty(u) ? "W" : u)}",
+            "energy.care_kw" => $"0 {(string.IsNullOrEmpty(u) ? "kW" : u)}",
             "seat_heat.driver" => string.IsNullOrEmpty(u) ? FormatLevel(sim.DriverSeatHeat) : $"{sim.DriverSeatHeat}{u}",
             "seat_heat.passenger" => string.IsNullOrEmpty(u) ? FormatLevel(sim.PassengerSeatHeat) : $"{sim.PassengerSeatHeat}{u}",
             "seat_heat.rear_left" => string.IsNullOrEmpty(u) ? FormatLevel(sim.RearLeftSeatHeat) : $"{sim.RearLeftSeatHeat}{u}",
@@ -1409,6 +1756,10 @@ public sealed class StudioCanvasControl : Border
             ? CreateAndroidMatchedGradient(bgStart, ParseColor(s!.BgEndColor, bgStart), s.GradientAngle ?? 135)
             : new SolidColorBrush(bgStart);
         int bWidth = (s?.BorderWidthPx ?? 2) > 0 ? Math.Max(1, (int)Smin(s?.BorderWidthPx ?? 2)) : 0;
+        int defaultRadius = (!node.IsPanel && string.Equals(node.Kind, "action_pill", StringComparison.OrdinalIgnoreCase))
+            ? 999
+            : (pack?.Tokens?.CornerRadiusPx ?? 20);
+        double resolvedRadius = Math.Min(Smin(s?.CornerRadiusPx ?? defaultRadius), Math.Min(rect.Width, rect.Height) * 0.5);
         return new Border
         {
             Width = rect.Width,
@@ -1416,7 +1767,7 @@ public sealed class StudioCanvasControl : Border
             Background = bgBrush,
             BorderBrush = new SolidColorBrush(ParseColor(s?.BorderColor, Color.FromArgb(70, 86, 139, 181))),
             BorderThickness = new Thickness(bWidth),
-            CornerRadius = new CornerRadius(Smin(s?.CornerRadiusPx ?? 20)),
+            CornerRadius = new CornerRadius(resolvedRadius),
             Tag = node
         };
     }
@@ -1490,48 +1841,115 @@ public sealed class StudioCanvasControl : Border
     private void BeginFreeformDrag(LayoutNodeModel node, int mode, Point pos)
     {
         if (!nodeRects.TryGetValue(node, out Rect r)) return;
+        if (!parentMap.TryGetValue(node, out var par) || par?.Layout != "freeform") return;
+
+        double sx = Math.Max(0.1, scaleX);
+        double sy = Math.Max(0.1, scaleY);
+        Rect pInner = panelInnerRects.TryGetValue(par, out Rect pi)
+            ? pi
+            : new Rect(0, 0, (pack?.ReferenceWidth ?? 1920) * sx, (pack?.ReferenceHeight ?? 720) * sy);
+
+        double startRefX, startRefY, startRefW, startRefH;
+        if (node.Bounds is { Length: >= 4 })
+        {
+            startRefX = node.Bounds[0];
+            startRefY = node.Bounds[1];
+            startRefW = Math.Max(20, node.Bounds[2]);
+            startRefH = Math.Max(20, node.Bounds[3]);
+        }
+        else
+        {
+            int[] m = NormalizeInsets(node.MarginPx);
+            startRefX = (r.X - pInner.X - Sx(m[0])) / sx;
+            startRefY = (r.Y - pInner.Y - Sy(m[1])) / sy;
+            startRefW = Math.Max(20, r.Width / sx);
+            startRefH = Math.Max(20, r.Height / sy);
+        }
+
         dragNode = node;
+        dragParent = par;
         dragMode = mode;
+        dragThresholdMet = false;
         dragStartCanvas = pos;
-        dragStartRect = r;
+        dragStartLocalRefRect = new Rect(startRefX, startRefY, startRefW, startRefH);
+        dragParentInnerRefSize = new Size(Math.Max(20, pInner.Width / sx), Math.Max(20, pInner.Height / sy));
         stageHost.CaptureMouse();
     }
 
     private void OnStageMouseMove(object sender, MouseEventArgs e)
     {
         if (dragNode == null) return;
-        Point cur = e.GetPosition(layoutLayer);
-        double dx = (cur.X - dragStartCanvas.X) / Math.Max(0.1, scaleX);
-        double dy = (cur.Y - dragStartCanvas.Y) / Math.Max(0.1, scaleY);
-        double refW = pack?.ReferenceWidth ?? 1920;
-        double refH = pack?.ReferenceHeight ?? 720;
-        double startRefX = dragStartRect.X / Math.Max(0.1, scaleX);
-        double startRefY = dragStartRect.Y / Math.Max(0.1, scaleY);
-        double startRefW = dragStartRect.Width / Math.Max(0.1, scaleX);
-        double startRefH = dragStartRect.Height / Math.Max(0.1, scaleY);
+        ApplyFreeformDragMove(e.GetPosition(layoutLayer));
+    }
+
+    private void ApplyFreeformDragMove(Point cur)
+    {
+        if (dragNode == null) return;
+        double rawDx = cur.X - dragStartCanvas.X;
+        double rawDy = cur.Y - dragStartCanvas.Y;
+        if (!dragThresholdMet)
+        {
+            if (Math.Abs(rawDx) < DragStartDeadzonePx && Math.Abs(rawDy) < DragStartDeadzonePx)
+                return;
+            dragThresholdMet = true;
+        }
+
+        double dx = rawDx / Math.Max(0.1, scaleX);
+        double dy = rawDy / Math.Max(0.1, scaleY);
+        double startRefX = dragStartLocalRefRect.X;
+        double startRefY = dragStartLocalRefRect.Y;
+        double startRefW = dragStartLocalRefRect.Width;
+        double startRefH = dragStartLocalRefRect.Height;
+
+        int[] m = NormalizeInsets(dragNode.MarginPx);
+        double maxRefX = Math.Max(0, dragParentInnerRefSize.Width - startRefW - m[0] - m[2]);
+        double maxRefY = Math.Max(0, dragParentInnerRefSize.Height - startRefH - m[1] - m[3]);
 
         dragNode.Bounds ??= new double[] { startRefX, startRefY, startRefW, startRefH };
         if (dragMode == 0)
         {
-            dragNode.Bounds[0] = Math.Round(Math.Clamp(startRefX + dx, 0, refW - startRefW));
-            dragNode.Bounds[1] = Math.Round(Math.Clamp(startRefY + dy, 0, refH - startRefH));
+            dragNode.Bounds[0] = Math.Round(Math.Clamp(startRefX + dx, 0, maxRefX));
+            dragNode.Bounds[1] = Math.Round(Math.Clamp(startRefY + dy, 0, maxRefY));
         }
         else
         {
-            dragNode.Bounds[2] = Math.Round(Math.Max(60, startRefW + dx));
-            dragNode.Bounds[3] = Math.Round(Math.Max(40, startRefH + dy));
+            double newW = Math.Round(Math.Max(20, startRefW + dx));
+            double newH = Math.Round(Math.Max(20, startRefH + dy));
+            dragNode.Bounds[2] = newW;
+            dragNode.Bounds[3] = newH;
+            if (dragNode.Width.HasValue) dragNode.Width = (int)newW;
+            if (dragNode.Height.HasValue) dragNode.Height = (int)newH;
         }
         RebuildScene();
     }
 
     private void OnStageMouseUp(object sender, MouseButtonEventArgs e)
     {
-        if (dragNode != null)
+        EndFreeformDrag();
+    }
+
+    private bool EndFreeformDrag()
+    {
+        if (dragNode == null) return false;
+        bool mutated = dragThresholdMet;
+        dragNode = null;
+        dragParent = null;
+        dragThresholdMet = false;
+        stageHost.ReleaseMouseCapture();
+        if (mutated)
         {
-            dragNode = null;
-            stageHost.ReleaseMouseCapture();
             PackMutated?.Invoke();
         }
+        return mutated;
+    }
+
+    public bool SimulateFreeformInteractionForTest(LayoutNodeModel node, int mode, double stageDeltaX, double stageDeltaY)
+    {
+        if (!nodeRects.TryGetValue(node, out Rect r)) return false;
+        Point start = new(r.X + r.Width * 0.5, r.Y + r.Height * 0.5);
+        BeginFreeformDrag(node, mode, start);
+        ApplyFreeformDragMove(new Point(start.X + stageDeltaX, start.Y + stageDeltaY));
+        return EndFreeformDrag();
     }
 
     private static LayoutNodeModel? FindNodeTag(DependencyObject d)
@@ -1740,7 +2158,11 @@ public sealed class StudioCanvasControl : Border
         }
         if (names.Count == 0)
         {
-            foreach (string f in Directory.GetFiles(dir, "*.jpg")) names.Add(f);
+            foreach (string f in Directory.GetFiles(dir))
+            {
+                string ext = System.IO.Path.GetExtension(f).ToLowerInvariant();
+                if (ext is ".jpg" or ".jpeg" or ".png" or ".webp") names.Add(f);
+            }
             names.Sort(StringComparer.OrdinalIgnoreCase);
         }
         foreach (string p in names)

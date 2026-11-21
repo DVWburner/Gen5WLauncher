@@ -35,12 +35,16 @@ public final class WidgetStyle {
     public int bgAnimFps = 15;
     public int bgDimAlpha = 95;
     public int[] paddingPx;
+    public boolean hasCornerRadiusOverride = false;
+    public boolean hasAccentColorOverride = false;
 
     public static WidgetStyle fromJson(JSONObject obj) {
         WidgetStyle s = new WidgetStyle();
         if (obj == null) {
             return s;
         }
+        s.hasCornerRadiusOverride = obj.has("cornerRadiusPx");
+        s.hasAccentColorOverride = obj.has("accentColor");
         s.transparent = obj.optBoolean("transparent", false);
         if (s.transparent) {
             s.bgColor = 0x00000000;

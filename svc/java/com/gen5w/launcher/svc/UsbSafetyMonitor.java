@@ -40,7 +40,7 @@ final class UsbSafetyMonitor {
             }
         }
         try {
-            HmgApi api = HmgApi.connect();
+            HmgApi api = HmgApi.connect().timeout(600);
             if (api.available()) {
                 List<String> hmgUsb = api.usbFolders();
                 for (String p : hmgUsb) {

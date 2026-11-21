@@ -6,7 +6,7 @@ import org.json.JSONObject;
  * Interactive action metadata attached to tiles and buttons.
  */
 public final class ActionSpec {
-    public String type = "none"; // none | preset | launch | launch_climate | launch_projection | broadcast | root_broadcast | root_start | root_service | goto_page | open_drawer | open_switcher | open_themes | open_theme_store | open_stock_tester | switcher_cmd | toggle_bar | toggle_bg | cycle_sound | launch_stock | reload_pack
+    public String type = "none"; // none | preset | launch | launch_climate | launch_projection | broadcast | root_broadcast | root_start | root_service | car_cmd | open_car_controls | goto_page | open_drawer | open_switcher | open_themes | open_theme_store | open_stock_tester | switcher_cmd | toggle_bar | toggle_bg | cycle_sound | launch_stock | reload_pack
     public String pkg = "";
     public String cls = "";
     public String actionName = "";

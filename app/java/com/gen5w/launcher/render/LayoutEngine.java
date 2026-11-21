@@ -70,6 +70,7 @@ public final class LayoutEngine {
             }
             extractPlaceholderKeys(w.title, out);
             extractPlaceholderKeys(w.subtitle, out);
+            extractPlaceholderKeys(w.badgeText, out);
         }
     }
 
@@ -89,6 +90,32 @@ public final class LayoutEngine {
         }
     }
 
+    public static final class PageScopedAnim {
+        final int pageIndex; // -1 = global / outside pager
+        final WidgetAnimator.IdleHandle idleHandle;
+        final InteractiveCardFrame cardFrame;
+        final AnimatedMediaLayer mediaLayer;
+
+        PageScopedAnim(int pageIndex, WidgetAnimator.IdleHandle idleHandle, InteractiveCardFrame cardFrame, AnimatedMediaLayer mediaLayer) {
+            this.pageIndex = pageIndex;
+            this.idleHandle = idleHandle;
+            this.cardFrame = cardFrame;
+            this.mediaLayer = mediaLayer;
+        }
+
+        void applyPaused(boolean paused) {
+            if (idleHandle != null) idleHandle.setPaused(paused);
+            if (cardFrame != null) cardFrame.setExternalPaused(paused);
+            if (mediaLayer != null) mediaLayer.setExternalPaused(paused);
+        }
+
+        void release() {
+            if (idleHandle != null) idleHandle.release();
+            if (cardFrame != null) cardFrame.setExternalPaused(true);
+            if (mediaLayer != null) mediaLayer.clear();
+        }
+    }
+
     public static final class Bindings {
         public final List<TextView> clockTimes = new ArrayList<TextView>();
         public final List<TextView> clockDates = new ArrayList<TextView>();
@@ -101,10 +128,42 @@ public final class LayoutEngine {
         public final List<SwitcherBinding> switcherPills = new ArrayList<SwitcherBinding>();
         public final List<HorizontalPagerView> pagers = new ArrayList<HorizontalPagerView>();
         public final List<FrameLayout> pageIndicatorSlots = new ArrayList<FrameLayout>();
+        public final List<PageScopedAnim> scopedAnims = new ArrayList<PageScopedAnim>();
         public TextView barToggleSub;
         public TextView soundToggleSub;
         public boolean preferMph = false;
         public boolean preferCelsius = false;
+        private boolean animationsActive = true;
+        private final SimpleDateFormat clockTimeFormat = new SimpleDateFormat("h:mm a", Locale.US);
+        private final SimpleDateFormat clockDateFormat = new SimpleDateFormat("EEE, MMM d", Locale.US);
+
+        public void setAnimationsActive(boolean active) {
+            this.animationsActive = active;
+            syncScopedAnimations();
+            if (!active) {
+                for (SwitcherBinding sb : switcherPills) {
+                    sb.stopPulse();
+                }
+            }
+        }
+
+        public void syncScopedAnimations() {
+            int activePage = pagers.isEmpty() ? 0 : pagers.get(0).getCurrentPage();
+            for (PageScopedAnim a : scopedAnims) {
+                boolean onVisiblePage = a.pageIndex < 0 || a.pageIndex == activePage;
+                a.applyPaused(!(animationsActive && onVisiblePage));
+            }
+        }
+
+        public void release() {
+            animationsActive = false;
+            for (PageScopedAnim a : scopedAnims) {
+                a.release();
+            }
+            for (SwitcherBinding sb : switcherPills) {
+                sb.stopPulse();
+            }
+        }
 
         public boolean navigateToPage(String target) {
             if (pagers.isEmpty()) {
@@ -130,11 +189,14 @@ public final class LayoutEngine {
         }
 
         public void updateClock() {
+            if (clockTimes.isEmpty() && clockDates.isEmpty()) {
+                return;
+            }
             Date now = new Date();
-            String t = new SimpleDateFormat("h:mm a", Locale.US).format(now);
-            String d = new SimpleDateFormat("EEE, MMM d", Locale.US).format(now).toUpperCase(Locale.US);
-            for (TextView tv : clockTimes) tv.setText(t);
-            for (TextView tv : clockDates) tv.setText(d);
+            String t = clockTimeFormat.format(now);
+            String d = clockDateFormat.format(now).toUpperCase(Locale.US);
+            for (TextView tv : clockTimes) setTextIfChanged(tv, t);
+            for (TextView tv : clockDates) setTextIfChanged(tv, d);
         }
 
         public void updateTelemetry(TelemetryModel.Snapshot s) {
@@ -146,15 +208,18 @@ public final class LayoutEngine {
                     setTextIfChanged(dt.titleView, formatDynamicText(dt.spec.title, dt.spec.telemetryKey, dt.spec.unit, s, dt.titleBlankUsesValue));
                 }
                 if (dt.subView != null) {
-                    setTextIfChanged(dt.subView, formatDynamicText(dt.spec.subtitle, dt.spec.telemetryKey, dt.spec.unit, s, false));
+                    setTextIfChanged(dt.subView, formatDynamicText(dt.spec.subtitle, dt.spec.telemetryKey, dt.spec.unit, s, dt.subBlankUsesValue));
+                }
+                if (dt.badgeView != null) {
+                    setTextIfChanged(dt.badgeView, formatDynamicText(dt.spec.badgeText, dt.spec.telemetryKey, dt.spec.unit, s, false));
                 }
             }
             for (ProgressBarBinding pb : progressBars) {
                 String k = pb.spec.telemetryKey;
                 String u = pb.spec.unit;
                 float val = parseTelemetryNumeric(k, u, s, Float.NaN);
-                double minV = pb.spec.minValue != null ? pb.spec.minValue.doubleValue() : defaultSensorMin(k, u);
-                double maxV = pb.spec.maxValue != null ? pb.spec.maxValue.doubleValue() : defaultSensorMax(k, u);
+                double minV = pb.spec.minValue != null ? pb.spec.minValue.doubleValue() : defaultSensorMin(k, u, s);
+                double maxV = pb.spec.maxValue != null ? pb.spec.maxValue.doubleValue() : defaultSensorMax(k, u, s);
                 float pct = Float.isNaN(val) || maxV <= minV ? 0f : (float) ((val - minV) * 100.0 / (maxV - minV));
                 String textOverlay = "";
                 if (pb.spec.showText) {
@@ -170,8 +235,8 @@ public final class LayoutEngine {
                 String k = (rg.spec.telemetryKey == null || rg.spec.telemetryKey.isEmpty()) ? "hv.soc" : rg.spec.telemetryKey;
                 String u = rg.spec.unit;
                 float val = parseTelemetryNumeric(k, u, s, Float.NaN);
-                double minV = rg.spec.minValue != null ? rg.spec.minValue.doubleValue() : defaultSensorMin(k, u);
-                double maxV = rg.spec.maxValue != null ? rg.spec.maxValue.doubleValue() : defaultSensorMax(k, u);
+                double minV = rg.spec.minValue != null ? rg.spec.minValue.doubleValue() : defaultSensorMin(k, u, s);
+                double maxV = rg.spec.maxValue != null ? rg.spec.maxValue.doubleValue() : defaultSensorMax(k, u, s);
                 float pct = Float.isNaN(val) || maxV <= minV ? -1f : (float) ((val - minV) * 100.0 / (maxV - minV));
                 String label = resolveTelemetryValue(k, u, s);
                 boolean isHv = "hv.soc".equals(TelemetryModel.canonicalKey(k));
@@ -217,6 +282,9 @@ public final class LayoutEngine {
         }
 
         private static void setTextIfChanged(TextView tv, String text) {
+            if (tv == null) {
+                return;
+            }
             String next = text == null ? "" : text;
             CharSequence cur = tv.getText();
             if (cur != null && next.contentEquals(cur)) {
@@ -238,28 +306,32 @@ public final class LayoutEngine {
             String ver = (st.appVersionName != null && !st.appVersionName.isEmpty()) ? (" \u2022 v" + st.appVersionName) : "";
             for (SwitcherBinding b : switcherPills) {
                 if (!st.serviceReachable) {
-                    b.title.setText("SWITCHER OFFLINE");
-                    b.sub.setText("Manual / Stock Mode");
+                    setTextIfChanged(b.title, "SWITCHER OFFLINE");
+                    setTextIfChanged(b.sub, "Manual / Stock Mode");
                     setCardAccent(b, 0xFF94A3B8);
                     b.stopPulse();
                 } else if (st.deadmanRemainingSec > 0) {
-                    b.title.setText("TEST MODE: " + st.deadmanRemainingSec + "s");
-                    b.sub.setText("Tap to Confirm or Revert" + ver);
+                    setTextIfChanged(b.title, "TEST MODE: " + st.deadmanRemainingSec + "s");
+                    setTextIfChanged(b.sub, "Tap to Confirm or Revert" + ver);
                     setCardAccent(b, 0xFFF59E0B);
-                    b.startPulse();
+                    if (animationsActive) {
+                        b.startPulse();
+                    } else {
+                        b.stopPulse();
+                    }
                 } else if (!st.trippedReason.isEmpty()) {
-                    b.title.setText("SAFE MODE");
-                    b.sub.setText(st.trippedReason + ver);
+                    setTextIfChanged(b.title, "SAFE MODE");
+                    setTextIfChanged(b.sub, st.trippedReason + ver);
                     setCardAccent(b, 0xFFEF4444);
                     b.stopPulse();
                 } else if (st.isCustomHome) {
-                    b.title.setText("DEFAULT HOME");
-                    b.sub.setText((st.homeEnabled ? "5-Layer Failsafe Armed" : "Active") + ver);
+                    setTextIfChanged(b.title, "DEFAULT HOME");
+                    setTextIfChanged(b.sub, (st.homeEnabled ? "5-Layer Failsafe Armed" : "Active") + ver);
                     setCardAccent(b, 0xFF10B981);
                     b.stopPulse();
                 } else {
-                    b.title.setText("STOCK HOME ACTIVE");
-                    b.sub.setText("Tap to Test / Enable Custom" + ver);
+                    setTextIfChanged(b.title, "STOCK HOME ACTIVE");
+                    setTextIfChanged(b.sub, "Tap to Test / Enable Custom" + ver);
                     setCardAccent(b, 0xFF38BDF8);
                     b.stopPulse();
                 }
@@ -267,6 +339,11 @@ public final class LayoutEngine {
         }
 
         private static void setCardAccent(SwitcherBinding b, int borderColor) {
+            if (b.hasAccent && b.lastAccentColor == borderColor) {
+                return;
+            }
+            b.hasAccent = true;
+            b.lastAccentColor = borderColor;
             b.card.setBackground(makeStateDrawable(b.spec.style, borderColor, b.borderPx, b.radiusPx));
         }
 
@@ -299,15 +376,19 @@ public final class LayoutEngine {
                 }
                 out.append(working, pos, open);
                 String token = working.substring(open + 1, close).trim();
-                out.append(token.isEmpty() ? "" : resolveTelemetryValue(token, unitOverride, s));
+                if (!token.isEmpty()) {
+                    boolean sameAsPrimary = primaryKey != null && !primaryKey.isEmpty()
+                            && TelemetryModel.canonicalKey(token).equals(TelemetryModel.canonicalKey(primaryKey));
+                    out.append(resolveTelemetryValue(token, sameAsPrimary ? unitOverride : "", s));
+                }
                 pos = close + 1;
             }
             return out.toString();
         }
 
         private boolean shouldUseMph(String rawKey, String unit) {
-            if ("speed_mph".equals(rawKey) || "odometer_mi".equals(rawKey)) return true;
-            if ("speed_kmh".equals(rawKey) || "odometer_km".equals(rawKey)) return false;
+            if ("speed_mph".equals(rawKey) || "odometer_mi".equals(rawKey) || "hv.range_mi".equals(rawKey)) return true;
+            if ("speed_kmh".equals(rawKey) || "odometer_km".equals(rawKey) || "hv.range_km".equals(rawKey)) return false;
             if (unit != null && !unit.trim().isEmpty()) {
                 String u = unit.trim().toLowerCase(Locale.US);
                 if (u.contains("mph") || u.equals("mi")) return true;
@@ -327,18 +408,33 @@ public final class LayoutEngine {
             return !preferCelsius;
         }
 
-        private double defaultSensorMin(String key, String unit) {
+        private boolean isClimateCelsius(String unit, TelemetryModel.Snapshot s) {
+            if (unit != null && !unit.trim().isEmpty()) {
+                String u = unit.trim().toUpperCase(Locale.US);
+                if (u.contains("C")) return true;
+                if (u.contains("F")) return false;
+            }
+            String tUnit = s != null ? s.getRaw("climate.temp_unit") : "--";
+            if ("C".equalsIgnoreCase(tUnit)) return true;
+            if ("F".equalsIgnoreCase(tUnit)) return false;
+            return preferCelsius;
+        }
+
+        private double defaultSensorMin(String key, String unit, TelemetryModel.Snapshot s) {
             String k = TelemetryModel.canonicalKey(key);
             if ("hv.battery_temp_min".equals(k)) {
                 return shouldPackTempUseFahrenheit(key, unit) ? 0.0 : -20.0;
             }
             if ("outside_temp".equals(k)) return (unit != null && unit.toUpperCase(Locale.US).contains("F")) ? -20.0 : -30.0;
             if ("outside_temp_f".equals(k)) return (unit != null && unit.toUpperCase(Locale.US).contains("C")) ? -30.0 : -20.0;
+            if ("climate.driver_temp".equals(k) || "climate.passenger_temp".equals(k)) {
+                return isClimateCelsius(unit, s) ? 17.0 : 62.0;
+            }
             if ("steering.angle".equals(k)) return -540.0;
             return 0.0;
         }
 
-        private double defaultSensorMax(String key, String unit) {
+        private double defaultSensorMax(String key, String unit, TelemetryModel.Snapshot s) {
             String k = TelemetryModel.canonicalKey(key);
             if ("hv.battery_temp_min".equals(k)) {
                 return shouldPackTempUseFahrenheit(key, unit) ? 140.0 : 60.0;
@@ -346,11 +442,43 @@ public final class LayoutEngine {
             if ("outside_temp".equals(k)) return (unit != null && unit.toUpperCase(Locale.US).contains("F")) ? 120.0 : 50.0;
             if ("outside_temp_f".equals(k)) return (unit != null && unit.toUpperCase(Locale.US).contains("C")) ? 50.0 : 120.0;
             if ("speed".equals(k)) return shouldUseMph(key, unit) ? 120.0 : 180.0;
+            if ("hv.range".equals(k)) return shouldUseMph(key, unit) ? 350.0 : 550.0;
+            if ("odometer".equals(k)) return shouldUseMph(key, unit) ? 100000.0 : 160000.0;
+            if ("charging.remain_min".equals(k)) return 600.0;
+            if ("climate.fan_speed".equals(k)) return 8.0;
+            if ("climate.auto_level".equals(k)) return 3.0;
+            if ("climate.vent_mode".equals(k)) return 5.0;
+            if ("climate.driver_temp".equals(k) || "climate.passenger_temp".equals(k)) {
+                return isClimateCelsius(unit, s) ? 27.0 : 82.0;
+            }
+            if ("audio.volume".equals(k)) return 45.0;
             if ("steering.angle".equals(k)) return 540.0;
+            if ("energy.drivetrain_kw".equals(k)) return 150.0;
+            if ("energy.climate_kw".equals(k)) return 10.0;
+            if ("energy.care_kw".equals(k)) return 15.0;
+            if ("energy.electronics_w".equals(k)) return 1500.0;
+            if ("hv.conditioning".equals(k)) return 2.0;
+            if ("conditioning.state".equals(k)) return 5.0;
+            if (k.startsWith("tyre.") && k.endsWith("_psi")) return 55.0;
             if (k.startsWith("seat_heat.") || k.startsWith("seat_vent.")) return 3.0;
             if ("wheel_heat".equals(k) || "defogger".equals(k) || "gear.park".equals(k) || "parking_brake".equals(k)
                     || "charging".equals(k) || "hv.ready".equals(k) || "moving".equals(k)
-                    || "hv.conditioning_active".equals(k) || "driving.restricted".equals(k)) {
+                    || "hv.conditioning_active".equals(k) || "hv.conditioning_failure".equals(k)
+                    || "hv.v2l_active".equals(k) || "driving.restricted".equals(k)
+                    || "battery12v.saver".equals(k) || "battery12v.sensor_invalid".equals(k)
+                    || "battery12v.sensor_error".equals(k) || "guide_lines".equals(k)
+                    || "climate.on".equals(k) || "climate.auto".equals(k) || "climate.ac".equals(k)
+                    || "climate.heat".equals(k) || "climate.rear_on".equals(k)
+                    || "climate.rear_lock".equals(k) || "climate.air_clean".equals(k)
+                    || "climate.recirc".equals(k) || "climate.sync".equals(k)
+                    || "climate.driver_only".equals(k) || "climate.front_defrost".equals(k)
+                    || "climate.smart_vent".equals(k) || "climate.auto_defog".equals(k)
+                    || "climate.after_blow".equals(k) || "audio.muted".equals(k)
+                    || "sunroof.open".equals(k) || "trunk.open".equals(k)
+                    || "trunk.ptg_state".equals(k) || "hood.open".equals(k)
+                    || "charge_door.open".equals(k)
+                    || k.startsWith("door.") || k.startsWith("window.")
+                    || (k.startsWith("tyre.") && k.endsWith("_status"))) {
                 return 1.0;
             }
             return 100.0;
@@ -364,6 +492,17 @@ public final class LayoutEngine {
             if ("--".equals(raw)) {
                 return fallback;
             }
+            if ("climate.driver_temp".equals(k) || "climate.passenger_temp".equals(k)) {
+                if ("LO".equalsIgnoreCase(raw)) {
+                    return (float) defaultSensorMin(key, u, s);
+                }
+                if ("HI".equalsIgnoreCase(raw)) {
+                    return (float) defaultSensorMax(key, u, s);
+                }
+                if ("OFF".equalsIgnoreCase(raw)) {
+                    return 0f;
+                }
+            }
             try {
                 float val = Float.parseFloat(raw);
                 if ("hv.battery_temp_min".equals(k) && shouldPackTempUseFahrenheit(key, u)) {
@@ -375,6 +514,8 @@ public final class LayoutEngine {
                 } else if ("speed".equals(k) && shouldUseMph(key, u)) {
                     val = val * 0.621371f;
                 } else if ("odometer".equals(k) && shouldUseMph(key, u)) {
+                    val = val * 0.621371f;
+                } else if ("hv.range".equals(k) && shouldUseMph(key, u)) {
                     val = val * 0.621371f;
                 }
                 return val;
@@ -471,17 +612,148 @@ public final class LayoutEngine {
                     float mph = parseTelemetryNumeric("speed_mph", "mph", s, 0f);
                     return Math.round(mph) + " mph";
                 }
-                return s.speed + " km/h";
+                float kmh = parseTelemetryNumeric("speed_kmh", "km/h", s, Float.NaN);
+                return Float.isNaN(kmh) ? (s.speed + " km/h") : (Math.round(kmh) + " km/h");
+            }
+            if ("pedal.accel".equals(k)) {
+                String r = s.getRaw(k);
+                return "--".equals(r) ? ("--" + (u.isEmpty() ? "%" : u)) : (stripTrailingZero(r) + (u.isEmpty() ? "%" : u));
             }
             if ("steering.angle".equals(k)) {
                 String r = s.getRaw(k);
                 return "--".equals(r) ? ("--" + (u.isEmpty() ? "\u00B0" : u)) : (stripTrailingZero(r) + (u.isEmpty() ? "\u00B0" : u));
+            }
+            if ("hv.range".equals(k)) {
+                boolean useMi = shouldUseMph(rawKey, u);
+                String suff = !u.isEmpty() ? (" " + u) : (useMi ? " mi" : " km");
+                String raw = s.getRaw(k);
+                if ("--".equals(raw)) return "--" + suff;
+                float v = parseTelemetryNumeric(rawKey, u, s, Float.NaN);
+                return Float.isNaN(v) ? (raw + suff) : (Math.round(v) + suff);
+            }
+            if ("charging.remain_min".equals(k)) {
+                return fmtDurationMin(s.getRaw(k), u);
+            }
+            if ("climate.driver_temp".equals(k) || "climate.passenger_temp".equals(k)) {
+                String r = s.getRaw(k);
+                if ("--".equals(r)) return "--";
+                if ("OFF".equalsIgnoreCase(r) || "LO".equalsIgnoreCase(r) || "HI".equalsIgnoreCase(r)) {
+                    return r.toUpperCase(Locale.US);
+                }
+                if (!u.isEmpty()) return stripTrailingZero(r) + u;
+                String tUnit = s.getRaw("climate.temp_unit");
+                String deg = "C".equalsIgnoreCase(tUnit) ? "\u00B0C"
+                        : ("F".equalsIgnoreCase(tUnit) ? "\u00B0F" : (preferCelsius ? "\u00B0C" : "\u00B0F"));
+                return stripTrailingZero(r) + deg;
+            }
+            if ("climate.fan_speed".equals(k)) {
+                String r = s.getRaw(k);
+                if ("--".equals(r)) return "--";
+                String n = stripTrailingZero(r);
+                if (!u.isEmpty()) return n + u;
+                return "0".equals(n) ? "OFF" : ("Lvl " + n);
+            }
+            if ("climate.auto_level".equals(k)) {
+                String r = s.getRaw(k);
+                if ("--".equals(r)) return "--";
+                String n = stripTrailingZero(r);
+                if (!u.isEmpty()) return n + u;
+                if ("0".equals(n)) return "OFF";
+                if ("1".equals(n)) return "LOW";
+                if ("2".equals(n)) return "MED";
+                if ("3".equals(n)) return "HIGH";
+                return n;
+            }
+            if ("climate.on".equals(k) || "climate.auto".equals(k) || "climate.ac".equals(k)
+                    || "climate.heat".equals(k) || "climate.rear_on".equals(k)
+                    || "climate.rear_lock".equals(k) || "climate.air_clean".equals(k)
+                    || "climate.recirc".equals(k) || "climate.sync".equals(k)
+                    || "climate.driver_only".equals(k) || "climate.front_defrost".equals(k)
+                    || "climate.smart_vent".equals(k) || "climate.auto_defog".equals(k)
+                    || "climate.after_blow".equals(k) || "guide_lines".equals(k)
+                    || "battery12v.saver".equals(k) || "hv.v2l_active".equals(k)) {
+                return fmtBinaryFlag(s.getRaw(k), "ON", "OFF");
+            }
+            if ("climate.vent_mode".equals(k)) {
+                return fmtVentMode(s.getRaw(k));
+            }
+            if ("door.any_open".equals(k)) {
+                return fmtZeroFlag(s.getRaw(k), "ALL CLOSED", "DOOR OPEN");
+            }
+            if ("door.lock_state".equals(k) || k.startsWith("door.lock.")) {
+                return fmtBinaryFlag(s.getRaw(k), "LOCKED", "UNLOCKED");
+            }
+            if ((k.startsWith("door.") && !k.startsWith("door.lock"))
+                    || "trunk.open".equals(k) || "trunk.ptg_state".equals(k)
+                    || "hood.open".equals(k) || "charge_door.open".equals(k)) {
+                return fmtZeroFlag(s.getRaw(k), "CLOSED", "OPEN");
+            }
+            if ("audio.volume".equals(k)) {
+                String r = s.getRaw(k);
+                if ("--".equals(r)) return "--";
+                return u.isEmpty() ? stripTrailingZero(r) : (stripTrailingZero(r) + u);
+            }
+            if ("audio.muted".equals(k)) {
+                return fmtBinaryFlag(s.getRaw(k), "MUTED", "ACTIVE");
+            }
+            if (k.startsWith("tyre.") && k.endsWith("_status")) {
+                return fmtZeroFlag(s.getRaw(k), "OK", "LOW");
+            }
+            if (k.startsWith("window.") || "sunroof.open".equals(k)) {
+                return fmtZeroFlag(s.getRaw(k), "CLOSED", "OPEN");
+            }
+            if ("energy.drivetrain_kw".equals(k) || "energy.climate_kw".equals(k) || "energy.care_kw".equals(k)) {
+                String r = s.getRaw(k);
+                return "--".equals(r) ? "--" : (stripTrailingZero(r) + (u.isEmpty() ? " kW" : (" " + u)));
+            }
+            if ("energy.electronics_w".equals(k)) {
+                String r = s.getRaw(k);
+                return "--".equals(r) ? "--" : (stripTrailingZero(r) + (u.isEmpty() ? " W" : (" " + u)));
             }
             String generic = s.getRaw(k);
             if (!"--".equals(generic)) {
                 return u.isEmpty() ? stripTrailingZero(generic) : (stripTrailingZero(generic) + u);
             }
             return s.connected ? "--" : "--";
+        }
+
+        private static String fmtBinaryFlag(String r, String oneLabel, String zeroLabel) {
+            if ("--".equals(r)) return "--";
+            return "1".equals(stripTrailingZero(r)) ? oneLabel : zeroLabel;
+        }
+
+        private static String fmtZeroFlag(String r, String zeroLabel, String nonZeroLabel) {
+            if ("--".equals(r)) return "--";
+            return "0".equals(stripTrailingZero(r)) ? zeroLabel : nonZeroLabel;
+        }
+
+        private static String fmtVentMode(String r) {
+            if ("--".equals(r)) return "--";
+            String n = stripTrailingZero(r);
+            if ("0".equals(n)) return "AUTO";
+            if ("1".equals(n)) return "FACE";
+            if ("2".equals(n)) return "BI-LVL";
+            if ("3".equals(n)) return "FLOOR";
+            if ("4".equals(n)) return "FLR+DEF";
+            if ("5".equals(n) || "10".equals(n)) return "DEFROST";
+            return "M" + n;
+        }
+
+        private static String fmtDurationMin(String r, String unit) {
+            if ("--".equals(r)) return "--";
+            if (!unit.isEmpty()) return stripTrailingZero(r) + unit;
+            try {
+                int mins = Math.round(Float.parseFloat(r));
+                if (mins <= 0) return "--";
+                if (mins >= 60) {
+                    int h = mins / 60;
+                    int m = mins % 60;
+                    return m == 0 ? (h + "h") : (h + "h " + m + "m");
+                }
+                return mins + "m";
+            } catch (NumberFormatException ignored) {
+                return r;
+            }
         }
 
         private static String fmtUnit(String v, String unit) {
@@ -524,13 +796,22 @@ public final class LayoutEngine {
         final WidgetSpec spec;
         final TextView titleView;
         final TextView subView;
+        final TextView badgeView;
         final boolean titleBlankUsesValue;
+        final boolean subBlankUsesValue;
 
         DynamicTextBinding(WidgetSpec spec, TextView titleView, TextView subView, boolean titleBlankUsesValue) {
+            this(spec, titleView, subView, null, titleBlankUsesValue, false);
+        }
+
+        DynamicTextBinding(WidgetSpec spec, TextView titleView, TextView subView, TextView badgeView,
+                boolean titleBlankUsesValue, boolean subBlankUsesValue) {
             this.spec = spec;
             this.titleView = titleView;
             this.subView = subView;
+            this.badgeView = badgeView;
             this.titleBlankUsesValue = titleBlankUsesValue;
+            this.subBlankUsesValue = subBlankUsesValue;
         }
     }
 
@@ -575,6 +856,8 @@ public final class LayoutEngine {
         final TextView sub;
         final int borderPx;
         final float radiusPx;
+        boolean hasAccent = false;
+        int lastAccentColor = 0;
         ObjectAnimator pulse;
 
         SwitcherBinding(View card, WidgetSpec spec, TextView title, TextView sub, int borderPx, float radiusPx) {
@@ -610,6 +893,7 @@ public final class LayoutEngine {
     private final float scaleMin;
     private final ActionHandler handler;
     private final Bindings bindings = new Bindings();
+    private int currentBuildPageIndex = -1;
 
     private LayoutEngine(Context context, ThemePack pack, AssetResolver assets,
             int viewportW, int viewportH, ActionHandler handler) {
@@ -624,11 +908,44 @@ public final class LayoutEngine {
         this.bindings.preferCelsius = pack.tokens != null && "c".equalsIgnoreCase(pack.tokens.tempUnit);
     }
 
+    private int effectiveCornerRadiusPx(WidgetStyle st) {
+        if (st != null && st.hasCornerRadiusOverride) {
+            return st.cornerRadiusPx;
+        }
+        return pack != null && pack.tokens != null ? pack.tokens.cornerRadiusPx : (st != null ? st.cornerRadiusPx : 20);
+    }
+
+    private int effectiveAccentColor(WidgetStyle st) {
+        if (st != null && st.hasAccentColorOverride) {
+            return st.accentColor;
+        }
+        return pack != null && pack.tokens != null ? pack.tokens.accentColor : (st != null ? st.accentColor : 0xFF38BDF8);
+    }
+
+    private void registerIdleAnim(WidgetAnimator.IdleHandle handle) {
+        if (handle != null) {
+            bindings.scopedAnims.add(new PageScopedAnim(currentBuildPageIndex, handle, null, null));
+        }
+    }
+
+    private void registerCardFrameAnim(InteractiveCardFrame frame) {
+        if (frame != null) {
+            bindings.scopedAnims.add(new PageScopedAnim(currentBuildPageIndex, null, frame, null));
+        }
+    }
+
+    private void registerMediaLayerAnim(AnimatedMediaLayer layer) {
+        if (layer != null) {
+            bindings.scopedAnims.add(new PageScopedAnim(currentBuildPageIndex, null, null, layer));
+        }
+    }
+
     public static View build(Context context, ThemePack pack, AssetResolver assets,
             int viewportW, int viewportH, ActionHandler handler, Bindings[] outBindings) {
         LayoutEngine engine = new LayoutEngine(context, pack, assets, viewportW, viewportH, handler);
         View rootView = engine.buildNode(pack.root, false);
         engine.populateStandalonePageIndicators();
+        engine.bindings.syncScopedAnimations();
         rootView.setLayoutParams(new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
@@ -754,7 +1071,7 @@ public final class LayoutEngine {
             bindClickAndAnim(host, panel, panel.action);
         } else {
             applyContainerStyle(host, panel.style);
-            WidgetAnimator.attach(host, panel.animation, false);
+            registerIdleAnim(WidgetAnimator.attach(host, panel.animation, false));
         }
         return host;
     }
@@ -771,7 +1088,12 @@ public final class LayoutEngine {
         applyOpacity(shell, panel.style);
 
         HorizontalPagerView pager = new HorizontalPagerView(context);
+        final boolean isPrimaryPager = bindings.pagers.isEmpty();
+        int prevPageIndex = currentBuildPageIndex;
         for (int i = 0; i < panel.children.size(); i++) {
+            if (isPrimaryPager) {
+                currentBuildPageIndex = i;
+            }
             LayoutNode child = panel.children.get(i);
             View pageView = buildNode(child, ancestorHandlesClicks);
             if (!child.id.isEmpty()) {
@@ -784,14 +1106,23 @@ public final class LayoutEngine {
                             : ("Page " + (i + 1)));
             pager.addPage(pageView, title);
         }
+        currentBuildPageIndex = prevPageIndex;
         bindings.pagers.add(pager);
+        if (isPrimaryPager) {
+            pager.addOnPageChangeListener(new HorizontalPagerView.OnPageChangeListener() {
+                @Override
+                public void onPageSelected(int index) {
+                    bindings.syncScopedAnimations();
+                }
+            });
+        }
         shell.addView(pager, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         IndicatorStyle ind = resolveEffectiveIndicator(panel);
         if (panel.showDots && !ind.isDisabled() && pager.getPageCount() > 1) {
             HorizontalPagerView.PageDotsBar dots = new HorizontalPagerView.PageDotsBar(
-                    context, pager, ind, panel.style.accentColor, assets, scaleX, scaleY, scaleMin);
+                    context, pager, ind, effectiveAccentColor(panel.style), assets, scaleX, scaleY, scaleMin);
             LinearLayout.LayoutParams dp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             dp.gravity = resolveHorizontalGravity(ind.align, Gravity.CENTER_HORIZONTAL);
@@ -991,7 +1322,7 @@ public final class LayoutEngine {
         if (ownAction) {
             bindClickAndAnim(host, w, w.action);
         } else {
-            WidgetAnimator.attach(host, w.animation, false);
+            registerIdleAnim(WidgetAnimator.attach(host, w.animation, false));
         }
         return host;
     }
@@ -1004,11 +1335,13 @@ public final class LayoutEngine {
 
         if (!w.animIcon.isEmpty()) {
             AnimatedMediaLayer anim = new AnimatedMediaLayer(context);
+            anim.setCornerRadiusPx(smin(effectiveCornerRadiusPx(w.style)));
             if (AnimatedMediaLayer.isGifAsset(w.animIcon)) {
                 anim.setGif(assets, w.animIcon, 0);
             } else {
                 anim.setFrames(assets, w.animIcon, w.style.bgAnimFps, "cover".equalsIgnoreCase(w.scaleType), 0);
             }
+            registerMediaLayerAnim(anim);
             mediaView = anim;
         } else {
             ImageView iv = createIconView(assetRef, fallbackSize, w.style.iconTint);
@@ -1144,9 +1477,10 @@ public final class LayoutEngine {
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
 
-        View icon = createIconOrAnimView(w, smin(44));
+        int heroIconSz = smin(w.style.iconSizePx > 0 ? w.style.iconSizePx : 44);
+        View icon = createIconOrAnimView(w, heroIconSz);
         if (icon != null) {
-            LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(smin(44), smin(44));
+            LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(heroIconSz, heroIconSz);
             ip.rightMargin = sx(14);
             header.addView(icon, ip);
         }
@@ -1231,7 +1565,7 @@ public final class LayoutEngine {
         bindings.switcherPills.add(new SwitcherBinding(
                 card, w, title, sub,
                 Math.max(2, smin(w.style.borderWidthPx)),
-                smin(w.style.cornerRadiusPx)));
+                smin(effectiveCornerRadiusPx(w.style))));
         if (!ancestorHandlesClicks && hasAction(w.action)) {
             bindClickAndAnim(card, w, w.action);
         }
@@ -1256,22 +1590,36 @@ public final class LayoutEngine {
         textCol.setOrientation(LinearLayout.VERTICAL);
         textCol.setGravity(Gravity.CENTER_VERTICAL | resolveHorizontalGravity(w.style.textAlign, Gravity.LEFT));
 
+        boolean hasTitleBinding = containsToken(w.title) || ((w.title == null || w.title.isEmpty()) && !w.telemetryKey.isEmpty());
         TextView title = new TextView(context);
-        title.setText(w.title);
+        title.setText(hasTitleBinding
+                ? bindings.formatDynamicText(w.title, w.telemetryKey, w.unit, TelemetryModel.Snapshot.EMPTY, true)
+                : w.title);
         title.setTextColor(w.style.textColor);
         applyTextTypography(title, w.style, 19f, false, true);
         title.setSingleLine(true);
         textCol.addView(title);
 
-        if (w.subtitle != null && !w.subtitle.isEmpty()) {
-            TextView sub = new TextView(context);
-            sub.setText(w.subtitle);
+        TextView sub = null;
+        String pillSubRaw = w.subtitle == null ? "" : w.subtitle;
+        boolean autoPillSub = !w.telemetryKey.isEmpty() && !hasTitleBinding && pillSubRaw.isEmpty()
+                && !"toggle_bar".equals(w.action.type) && !"cycle_sound".equals(w.action.type);
+        boolean hasSubBinding = containsToken(pillSubRaw) || autoPillSub;
+        if (!pillSubRaw.isEmpty() || hasSubBinding) {
+            sub = new TextView(context);
+            sub.setText(hasSubBinding
+                    ? bindings.formatDynamicText(pillSubRaw, w.telemetryKey, w.unit, TelemetryModel.Snapshot.EMPTY, autoPillSub)
+                    : pillSubRaw);
             sub.setTextColor(w.style.accentColor);
             applyTextTypography(sub, w.style, 13f, true, false);
             sub.setSingleLine(true);
             textCol.addView(sub);
             if ("toggle_bar".equals(w.action.type)) bindings.barToggleSub = sub;
             else if ("cycle_sound".equals(w.action.type)) bindings.soundToggleSub = sub;
+        }
+        if (hasTitleBinding || hasSubBinding) {
+            bindings.dynamicTexts.add(new DynamicTextBinding(w, hasTitleBinding ? title : null, hasSubBinding ? sub : null, null,
+                    hasTitleBinding, autoPillSub));
         }
 
         card.addView(textCol);
@@ -1291,6 +1639,8 @@ public final class LayoutEngine {
 
         int sz = smin(w.style.iconSizePx > 0 ? w.style.iconSizePx : 54);
         View icon = createIconOrAnimView(w, sz);
+        TextView badge = null;
+        boolean hasBadgeBinding = false;
         if (icon != null || (w.badgeText != null && !w.badgeText.isEmpty())) {
             LinearLayout topRow = new LinearLayout(context);
             topRow.setOrientation(LinearLayout.HORIZONTAL);
@@ -1303,8 +1653,11 @@ public final class LayoutEngine {
                 if (icon != null && hGravity == Gravity.LEFT) {
                     topRow.addView(new View(context), new LinearLayout.LayoutParams(0, 1, 1f));
                 }
-                TextView badge = new TextView(context);
-                badge.setText(w.badgeText);
+                badge = new TextView(context);
+                hasBadgeBinding = containsToken(w.badgeText);
+                badge.setText(hasBadgeBinding
+                        ? bindings.formatDynamicText(w.badgeText, w.telemetryKey, w.unit, TelemetryModel.Snapshot.EMPTY, false)
+                        : w.badgeText);
                 badge.setTextColor(0xFFFFFFFF);
                 badge.setTypeface(Typeface.DEFAULT_BOLD);
                 badge.setTextSize(TypedValue.COMPLEX_UNIT_PX, smin(12f));
@@ -1322,8 +1675,11 @@ public final class LayoutEngine {
             card.addView(topRow, trp);
         }
 
+        boolean hasTitleBinding = containsToken(w.title) || ((w.title == null || w.title.isEmpty()) && !w.telemetryKey.isEmpty());
         TextView title = new TextView(context);
-        title.setText(w.title);
+        title.setText(hasTitleBinding
+                ? bindings.formatDynamicText(w.title, w.telemetryKey, w.unit, TelemetryModel.Snapshot.EMPTY, true)
+                : w.title);
         title.setTextColor(w.style.textColor);
         applyTextTypography(title, w.style, 26f, false, true);
         title.setSingleLine(true);
@@ -1331,9 +1687,15 @@ public final class LayoutEngine {
         title.setGravity(hGravity);
         card.addView(title);
 
-        if (w.subtitle != null && !w.subtitle.isEmpty()) {
-            TextView sub = new TextView(context);
-            sub.setText(w.subtitle);
+        TextView sub = null;
+        String tileSubRaw = w.subtitle == null ? "" : w.subtitle;
+        boolean autoTileSub = !w.telemetryKey.isEmpty() && !hasTitleBinding && tileSubRaw.isEmpty();
+        boolean hasSubBinding = containsToken(tileSubRaw) || autoTileSub;
+        if (!tileSubRaw.isEmpty() || hasSubBinding) {
+            sub = new TextView(context);
+            sub.setText(hasSubBinding
+                    ? bindings.formatDynamicText(tileSubRaw, w.telemetryKey, w.unit, TelemetryModel.Snapshot.EMPTY, autoTileSub)
+                    : tileSubRaw);
             sub.setTextColor(w.style.subTextColor);
             applyTextTypography(sub, w.style, 16f, true, false);
             sub.setSingleLine(true);
@@ -1343,6 +1705,14 @@ public final class LayoutEngine {
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             sp.topMargin = sy(4);
             card.addView(sub, sp);
+        }
+
+        if (hasTitleBinding || hasSubBinding || hasBadgeBinding) {
+            bindings.dynamicTexts.add(new DynamicTextBinding(w,
+                    hasTitleBinding ? title : null,
+                    hasSubBinding ? sub : null,
+                    hasBadgeBinding ? badge : null,
+                    hasTitleBinding, autoTileSub));
         }
 
         boolean ownAction = !ancestorHandlesClicks && hasAction(w.action);
@@ -1361,6 +1731,7 @@ public final class LayoutEngine {
             } else {
                 anim.setFrames(assets, ref, w.style.bgAnimFps, false, 0);
             }
+            registerMediaLayerAnim(anim);
             return anim;
         }
         return createIconView(w.icon, sizePx, w.style.iconTint);
@@ -1394,7 +1765,8 @@ public final class LayoutEngine {
         InteractiveCardFrame frame = new InteractiveCardFrame(context);
         frame.addView(content, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        frame.configureVisualEffects(st, node.animation, assets, smin(st.cornerRadiusPx));
+        frame.configureVisualEffects(st, node.animation, assets, smin(effectiveCornerRadiusPx(st)));
+        registerCardFrameAnim(frame);
         if ("ev_reactive".equals(fx)) {
             bindings.evReactiveCards.add(frame);
         }
@@ -1410,7 +1782,7 @@ public final class LayoutEngine {
     }
 
     private void applyTextTypography(TextView tv, WidgetStyle st, float defaultSize, boolean isSubtitle, boolean defaultBold) {
-        boolean bold = "bold".equalsIgnoreCase(st.fontWeight) || (!"normal".equalsIgnoreCase(st.fontWeight) && defaultBold);
+        boolean bold = !isSubtitle && ("bold".equalsIgnoreCase(st.fontWeight) || (!"normal".equalsIgnoreCase(st.fontWeight) && defaultBold));
         tv.setTypeface(assets.loadTypeface(st.fontFamily, bold, st.fontItalic));
         float px = isSubtitle ? (st.subtitleSizePx > 0 ? st.subtitleSizePx : defaultSize)
                               : (st.titleSizePx > 0 ? st.titleSizePx : defaultSize);
@@ -1429,7 +1801,7 @@ public final class LayoutEngine {
             bindClickAndAnim(host, node, node.action);
         } else {
             applyContainerStyle(host, node.style);
-            WidgetAnimator.attach(host, node.animation, false);
+            registerIdleAnim(WidgetAnimator.attach(host, node.animation, false));
         }
     }
 
@@ -1466,7 +1838,7 @@ public final class LayoutEngine {
     private void bindClickAndAnim(View view, final LayoutNode node, final ActionSpec action) {
         view.setClickable(true);
         view.setFocusable(true);
-        WidgetAnimator.attach(view, node.animation, true);
+        registerIdleAnim(WidgetAnimator.attach(view, node.animation, true));
         view.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -1486,7 +1858,7 @@ public final class LayoutEngine {
                 style.bgColor,
                 style.borderColor,
                 style.borderWidthPx > 0 ? Math.max(1, smin(style.borderWidthPx)) : 0,
-                smin(style.cornerRadiusPx)));
+                smin(effectiveCornerRadiusPx(style))));
     }
 
     private void applyInteractiveStyle(View v, WidgetStyle style) {
@@ -1496,8 +1868,8 @@ public final class LayoutEngine {
         v.setBackground(makeStateDrawable(
                 style,
                 style.borderColor,
-                Math.max(1, smin(style.borderWidthPx)),
-                smin(style.cornerRadiusPx)));
+                style.borderWidthPx > 0 ? Math.max(1, smin(style.borderWidthPx)) : 0,
+                smin(effectiveCornerRadiusPx(style))));
     }
 
     private static Drawable makeStateDrawable(WidgetStyle style, int borderColor, int borderPx, float radiusPx) {
@@ -1623,18 +1995,43 @@ public final class LayoutEngine {
             float cellW = (innerW - gap * (cols - 1)) / (float) cols;
             float cellH = (innerH - gap * (rows - 1)) / (float) rows;
 
+            int maxTrackRows = Math.max(rows, getChildCount() * 2 + 4);
+            boolean[][] occupied = new boolean[maxTrackRows][cols];
             int row = 0;
             int col = 0;
             for (int i = 0; i < getChildCount(); i++) {
                 View c = getChildAt(i);
                 LayoutParams lp = (LayoutParams) c.getLayoutParams();
-                int span = Math.min(cols, lp.colSpan);
-                if (col + span > cols) {
-                    row++;
-                    col = 0;
+                int spanCols = Math.min(cols, lp.colSpan);
+                int spanRows = Math.max(1, lp.rowSpan);
+
+                while (row < maxTrackRows) {
+                    if (col + spanCols > cols) {
+                        row++;
+                        col = 0;
+                        continue;
+                    }
+                    boolean fits = true;
+                    for (int dc = 0; dc < spanCols; dc++) {
+                        if (occupied[row][col + dc]) {
+                            fits = false;
+                            break;
+                        }
+                    }
+                    if (fits) {
+                        break;
+                    }
+                    col++;
                 }
-                int availW = Math.max(1, Math.round(cellW * span + gap * (span - 1)) - lp.mLeft - lp.mRight);
-                int availH = Math.max(1, Math.round(cellH * lp.rowSpan + gap * (lp.rowSpan - 1)) - lp.mTop - lp.mBottom);
+
+                for (int dr = 0; dr < spanRows && (row + dr) < maxTrackRows; dr++) {
+                    for (int dc = 0; dc < spanCols && (col + dc) < cols; dc++) {
+                        occupied[row + dr][col + dc] = true;
+                    }
+                }
+
+                int availW = Math.max(1, Math.round(cellW * spanCols + gap * (spanCols - 1)) - lp.mLeft - lp.mRight);
+                int availH = Math.max(1, Math.round(cellH * spanRows + gap * (spanRows - 1)) - lp.mTop - lp.mBottom);
                 int measW = c.getMeasuredWidth();
                 int measH = c.getMeasuredHeight();
                 int dx = lp.hGrav == Gravity.CENTER_HORIZONTAL ? Math.round((availW - measW) * 0.5f)
@@ -1644,7 +2041,7 @@ public final class LayoutEngine {
                 int left = getPaddingLeft() + Math.round(col * (cellW + gap)) + lp.mLeft + dx;
                 int top = getPaddingTop() + Math.round(row * (cellH + gap)) + lp.mTop + dy;
                 c.layout(left, top, left + measW, top + measH);
-                col += span;
+                col += spanCols;
                 if (col >= cols) {
                     col = 0;
                     row++;

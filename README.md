@@ -13,37 +13,38 @@
 
 Two separate ZIP packages are provided on each release:
 
-### 1. In-Car Installer Only (`Gen5WLauncher-v0.3.9-Car-USB-Installer.zip`)
+### 1. In-Car Installer Only (`Gen5WLauncher-v0.4.8-Car-USB-Installer.zip`)
 *For users who just want to install the launcher on their car and download themes directly in-car from the built-in **Theme Store**.*
 - Contains `NEMESIS.data`, `packages/hmgapi.gen5w-launcher.zip`, and `README.txt`.
 - Unzip directly to the root of a **FAT32** or **exFAT** USB drive and plug it into the head unit to install/update via **NEMESIS** (requires **HMG-API `>= 1.0.2`**).
-- Once installed, open **Gen5W Home** or **Gen5W Themes** → tap the **Theme Store** tile front-and-center to browse and install community themes directly on the car (or import themes from USB).
+- After installing, press your physical **HOME** button once — Android's native *"Select a Home app"* chooser pops up so you can pick **Gen5W Home** (`Just once` or `Always`).
+- Tap the **Theme Store** tile front-and-center to browse and install community themes directly on the car, or visit **[market.ioniqthemes.com](https://market.ioniqthemes.com)** on your PC to build and share your own themes.
 
-### 2. Windows Theme Studio (`Gen5WStudio-v0.3.9-win-x64.zip`)
+### 2. Windows Theme Studio (`Gen5WStudio-v0.4.8-win-x64.zip`)
 *For theme creators and customizers on Windows 10/11 (x64).*
 - **Prerequisite:** Requires the Microsoft **.NET 10 Windows Desktop Runtime (x64)** (`Microsoft.WindowsDesktop.App` `10.0.0`).
 - **Usage:** Unzip all 4 files (`Gen5WStudio.exe`, `Gen5WStudio.dll`, `Gen5WStudio.runtimeconfig.json`, `Gen5WStudio.deps.json`) together into the same folder and launch `Gen5WStudio.exe`.
-- Includes embedded starter templates/SVG icons, live interactive preview, frame/GIF/video backdrop converter, Theme Store publisher, and **Export to USB...** (with the `v0.3.9` NEMESIS USB installer already bundled inside).
+- Includes embedded starter templates/SVG icons, live interactive preview, frame/GIF/video backdrop converter, built-in **AI Context** theme-builder prompt generator, Theme Store publisher (`https://market.ioniqthemes.com`), and **Export to USB...** (with the `v0.4.8` NEMESIS USB installer already bundled inside).
 
 ---
 
 ## Key Features
 
 ### Head Unit Launcher (`com.gen5w.launcher`)
-- **Zero `/system` modifications:** Deployed as a signed `HMG-API` mod + user-space APK with a root service (`svc/home-switcher.jar`) calling KitKat `IPackageManager.replacePreferredActivity()`.
+- **Zero `/system` modifications & Native Android Home Chooser:** Deployed as a signed `HMG-API` mod + user-space APK with a root service (`svc/home-switcher.jar`). Pressing the physical **HOME** button brings up Android's native Home picker (*Just once* / *Always*) and persists your selection across reboots and updates.
 - **True `1920×720` Widescreen (`android:disableSS="true"`):** Declares `hkmcFlags=0x8` so OEM `RightScreenHome` yields full width, with runtime toggle between `1920×630` (OEM status bar shown) and `1920×720` fullscreen.
-- **Data-Driven `ThemePack v2` Renderer:** Supports `freeform`, `flex_row`, `flex_col`, `grid`, and `pager` layouts, per-element styling/gradients/fonts/animations, vector SVG rendering (`MiniSvgDrawable`), animated frame loops/GIF/video backdrops, and multi-page workspace switching.
-- **In-Car Theme Store & Theme Manager:** Standalone **Gen5W Themes** launcher icon + Theme Store integration (`https://market.ioniqthemes.com`) with TLS 1.2 + embedded ISRG Root X1/X2 compatibility on Android 4.4.2 and strict zip path/magic-byte validation (`SafeThemeZipExtractor`).
-- **Live EV & Vehicle Telemetry via HMG-API:** Tiered polling (`~120 ms` fast driving/pedal/brake/steering loop cleanly separated from `1.5s`/`5s` HV SoC, temperature, and 12V reads).
-- **OEM-Safe All Apps & Stock Shortcuts:** Categorized All Apps drawer prioritizing NEMESIS, HMG-API, and stock Home icons alongside installed apps, plus built-in missing-feature protection on the vehicle.
+- **Data-Driven `ThemePack v2` Renderer:** Supports `freeform` (including nested freeform panels), `flex_row`, `flex_col`, `grid`, and `pager` layouts, per-element styling/gradients/fonts/animations, vector SVG rendering (`MiniSvgDrawable`), animated frame loops/GIF/video backdrops, and multi-page workspace switching.
+- **In-Car Theme Store & Theme Manager:** Standalone **Gen5W Themes** launcher icon + Theme Store integration (`https://market.ioniqthemes.com`) with TLS 1.2 + embedded ISRG Root X1/X2 + GTS + DigiCert compatibility on Android 4.4.2 and strict zip path/magic-byte validation (`SafeThemeZipExtractor`).
+- **100 ms Live Vehicle Telemetry & Direct Car Controls:** Unified `HomeSwitcher` cache combining direct Gen5W Binder services (`BCM`, `DATC`, `HSCAN`, `HEV`, `Audio`, `VR`) with `HMG-API` for ~97 live vehicle sensors and isolated, timeout-guarded in-theme car controls (climate, seat heat/vent, windows, locks, trunk/hatch, charge door, preconditioning, and volume).
+- **OEM-Safe All Apps & Stock Shortcuts:** Categorized All Apps drawer prioritizing NEMESIS, HMG-API, and verified Gen5W stock apps/settings shortcuts alongside installed apps.
 - **Gen5W-Safe Click Audio (`SafeClickSoundPlayer`):** `System`, `Soft Synth`, or `Muted` click audio with call/VR/radio focus suppression.
 
 ### 5-Layer Failsafe (`HomeSwitcher`)
 1. **USB Kill-Switch (Highest Priority):** Polls USB roots & `Gen5WLauncher/` for `REVERT_LAUNCHER.txt` (permanently disables & restores stock Launcher3) or `SAFE_MODE.txt` (session-only revert to stock).
-2. **Boot-Strike Breaker:** Atomic persisted strike counter (`>= 2` unsuccessful cold boots auto-reverts to stock `com.android.launcher3/.view.Launcher`).
-3. **10s Cold-Boot Grace Window:** Leaves stock `Launcher3` preferred at shutdown so every cold boot settles in stock Home for ~10s before activating custom Home.
-4. **60s Crash Watchdog:** Monitors PID stability and reverts if the launcher crashes 3+ times within 60 seconds.
-5. **45s Deadman Switch:** Manual activation from Settings auto-reverts to stock Home after 45 seconds unless **Confirm Custom Home** is tapped.
+2. **Boot-Strike Breaker:** Atomic persisted strike counter (`>= 2` consecutive unconfirmed cold-boot resets auto-reverts to stock `com.android.launcher3/.view.Launcher`).
+3. **Service-Start Grace & Self-Heal:** Preserves your chosen default Home across APK updates and normal power cycles without overwriting `packages.xml`.
+4. **60s Crash Watchdog:** Monitors PID crash transitions and reverts to stock Home if the launcher crashes 3+ times within 60 seconds.
+5. **45s Deadman Test Mode:** Optional 45-second timed test mode inside **Default Home / Failsafe** that auto-reverts unless confirmed.
 
 ---
 
@@ -51,9 +52,9 @@ Two separate ZIP packages are provided on each release:
 
 1. **Create an emergency recovery USB stick first:** Place an empty file named `REVERT_LAUNCHER.txt` in the root of a spare FAT32/exFAT USB stick and keep it handy.
 2. Ensure **HMG-API `>= 1.0.2`** is installed on your NEMESIS-equipped head unit.
-3. Unzip `Gen5WLauncher-v0.3.9-Car-USB-Installer.zip` onto the root of a USB drive (or use Studio's **Export to USB...** with Option 3 checked) and plug it into the head unit to install via NEMESIS.
-4. Launch **Gen5W Home** from your All Apps menu to preview layouts, telemetry, and download themes from the **Theme Store**.
-5. Once satisfied, open **Failsafe & Settings** → tap **Test Custom Home (45s)** → press physical `HOME` → verify it loads cleanly → tap **Confirm Custom Home** on the top banner (or wait 45s to test auto-rollback).
+3. Unzip `Gen5WLauncher-v0.4.8-Car-USB-Installer.zip` onto the root of a USB drive (or use Studio's **Export to USB...** with Option 3 checked) and plug it into the head unit to install via NEMESIS.
+4. Press the physical **HOME** button once — select **Gen5W Home** (`Just once` to preview first, or `Always` to set as your default launcher).
+5. Tap **Theme Store** to browse and install community themes on the car, or visit **[market.ioniqthemes.com](https://market.ioniqthemes.com)** on your PC to create your own themes with **Gen5W Studio**.
 
 ---
 

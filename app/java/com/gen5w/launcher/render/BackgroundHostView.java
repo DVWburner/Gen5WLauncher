@@ -5,6 +5,7 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.LinearGradient;
+import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.RadialGradient;
 import android.graphics.Rect;
@@ -73,21 +74,34 @@ public final class BackgroundHostView extends FrameLayout {
         }
     }
 
+    public void setPaused(boolean paused) {
+        proceduralView.setPaused(paused);
+        mediaLayer.setExternalPaused(paused);
+    }
+
     private static final class ProceduralBackdropView extends View {
         private BackgroundSpec spec = new BackgroundSpec();
         private Bitmap bitmap;
+        private boolean externalPaused = false;
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
         private final Paint linePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Matrix shaderMatrix = new Matrix();
+        private final Rect dstRect = new Rect();
         private float phase = 0f;
         private ValueAnimator animator;
         private int cachedW = -1;
         private int cachedH = -1;
         private Shader baseShader;
+        private RadialGradient orb1Shader;
+        private RadialGradient orb2Shader;
+        private RadialGradient orb3Shader;
+        private LinearGradient sweepShader;
 
         ProceduralBackdropView(Context context) {
             super(context);
             linePaint.setStyle(Paint.Style.STROKE);
             linePaint.setStrokeWidth(1.5f);
+            rebuildAnimatedShaders(this.spec);
         }
 
         void configure(BackgroundSpec s, Bitmap bmp) {
@@ -95,8 +109,33 @@ public final class BackgroundHostView extends FrameLayout {
             this.bitmap = bmp;
             this.cachedW = -1;
             this.baseShader = null;
+            rebuildAnimatedShaders(s);
             updateAnimatorState();
             invalidate();
+        }
+
+        private void rebuildAnimatedShaders(BackgroundSpec s) {
+            int c1 = s != null ? s.accentColor : 0xFF38BDF8;
+            int c2 = s != null ? s.secondaryAccentColor : 0xFF818CF8;
+            orb1Shader = new RadialGradient(
+                    0f, 0f, 1f,
+                    withAlpha(c1, 118),
+                    withAlpha(c1, 0),
+                    Shader.TileMode.CLAMP);
+            orb2Shader = new RadialGradient(
+                    0f, 0f, 1f,
+                    withAlpha(c2, 105),
+                    withAlpha(c2, 0),
+                    Shader.TileMode.CLAMP);
+            orb3Shader = new RadialGradient(
+                    0f, 0f, 1f,
+                    withAlpha(c1, 85),
+                    withAlpha(c1, 0),
+                    Shader.TileMode.CLAMP);
+            sweepShader = new LinearGradient(
+                    -1f, 0f, 1f, 0f,
+                    new int[] { 0x00000000, withAlpha(c1, 72), 0x00000000 },
+                    null, Shader.TileMode.CLAMP);
         }
 
         @Override
@@ -117,15 +156,26 @@ public final class BackgroundHostView extends FrameLayout {
             super.onDetachedFromWindow();
         }
 
+        void setPaused(boolean paused) {
+            if (this.externalPaused == paused) {
+                return;
+            }
+            this.externalPaused = paused;
+            updateAnimatorState();
+        }
+
         private void updateAnimatorState() {
-            updateAnimatorState(getWindowVisibility() == VISIBLE && getVisibility() == VISIBLE && getWindowToken() != null);
+            updateAnimatorState(!externalPaused
+                    && getWindowVisibility() == VISIBLE
+                    && getVisibility() == VISIBLE
+                    && getWindowToken() != null);
         }
 
         private void updateAnimatorState(boolean shouldAnimate) {
             boolean isProceduralAnim = "animated_aurora".equals(spec.type)
                     || "animated_grid".equals(spec.type)
                     || "animated_mesh".equals(spec.type);
-            if (!shouldAnimate || !isProceduralAnim) {
+            if (!shouldAnimate || externalPaused || !isProceduralAnim) {
                 stopAnimator();
                 return;
             }
@@ -199,33 +249,36 @@ public final class BackgroundHostView extends FrameLayout {
             float cx1 = w * (0.28f + 0.14f * (float) Math.sin(phase));
             float cy1 = h * (0.35f + 0.12f * (float) Math.cos(phase * 0.7));
             float r1 = Math.max(w, h) * 0.55f;
-            paint.setShader(new RadialGradient(
-                    cx1, cy1, r1,
-                    withAlpha(spec.accentColor, 118),
-                    withAlpha(spec.accentColor, 0),
-                    Shader.TileMode.CLAMP));
-            canvas.drawCircle(cx1, cy1, r1, paint);
+            if (orb1Shader != null) {
+                shaderMatrix.setScale(r1, r1);
+                shaderMatrix.postTranslate(cx1, cy1);
+                orb1Shader.setLocalMatrix(shaderMatrix);
+                paint.setShader(orb1Shader);
+                canvas.drawCircle(cx1, cy1, r1, paint);
+            }
 
             float cx2 = w * (0.75f + 0.12f * (float) Math.cos(phase + 1.2));
             float cy2 = h * (0.68f + 0.14f * (float) Math.sin(phase * 0.8));
             float r2 = Math.max(w, h) * 0.48f;
-            paint.setShader(new RadialGradient(
-                    cx2, cy2, r2,
-                    withAlpha(spec.secondaryAccentColor, 105),
-                    withAlpha(spec.secondaryAccentColor, 0),
-                    Shader.TileMode.CLAMP));
-            canvas.drawCircle(cx2, cy2, r2, paint);
+            if (orb2Shader != null) {
+                shaderMatrix.setScale(r2, r2);
+                shaderMatrix.postTranslate(cx2, cy2);
+                orb2Shader.setLocalMatrix(shaderMatrix);
+                paint.setShader(orb2Shader);
+                canvas.drawCircle(cx2, cy2, r2, paint);
+            }
 
             if (meshExtras) {
                 float cx3 = w * (0.5f + 0.22f * (float) Math.sin(phase * 1.3 + 2.1));
                 float cy3 = h * (0.25f + 0.22f * (float) Math.cos(phase * 1.1));
                 float r3 = Math.max(w, h) * 0.42f;
-                paint.setShader(new RadialGradient(
-                        cx3, cy3, r3,
-                        withAlpha(spec.accentColor, 85),
-                        withAlpha(spec.accentColor, 0),
-                        Shader.TileMode.CLAMP));
-                canvas.drawCircle(cx3, cy3, r3, paint);
+                if (orb3Shader != null) {
+                    shaderMatrix.setScale(r3, r3);
+                    shaderMatrix.postTranslate(cx3, cy3);
+                    orb3Shader.setLocalMatrix(shaderMatrix);
+                    paint.setShader(orb3Shader);
+                    canvas.drawCircle(cx3, cy3, r3, paint);
+                }
 
                 linePaint.setColor(withAlpha(spec.accentColor, 36));
                 for (int band = 0; band < 4; band++) {
@@ -248,12 +301,14 @@ public final class BackgroundHostView extends FrameLayout {
                 canvas.drawLine(0, y, w, y, linePaint);
             }
             float sweepX = (float) ((phase / (Math.PI * 2.0)) * w);
-            paint.setShader(new LinearGradient(
-                    sweepX - 180f, 0f, sweepX + 180f, 0f,
-                    new int[] { 0x00000000, withAlpha(spec.accentColor, 72), 0x00000000 },
-                    null, Shader.TileMode.CLAMP));
-            canvas.drawRect(0, 0, w, h, paint);
-            paint.setShader(null);
+            if (sweepShader != null) {
+                shaderMatrix.setScale(180f, 1f);
+                shaderMatrix.postTranslate(sweepX, 0f);
+                sweepShader.setLocalMatrix(shaderMatrix);
+                paint.setShader(sweepShader);
+                canvas.drawRect(0, 0, w, h, paint);
+                paint.setShader(null);
+            }
         }
 
         private static int withAlpha(int color, int alpha) {
@@ -266,7 +321,8 @@ public final class BackgroundHostView extends FrameLayout {
             int dh = Math.round(bmp.getHeight() * scale);
             int left = (vw - dw) / 2;
             int top = (vh - dh) / 2;
-            canvas.drawBitmap(bmp, null, new Rect(left, top, left + dw, top + dh), paint);
+            dstRect.set(left, top, left + dw, top + dh);
+            canvas.drawBitmap(bmp, null, dstRect, paint);
         }
     }
 }

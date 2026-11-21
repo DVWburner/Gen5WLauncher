@@ -13,6 +13,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Polls HMG-API live vehicle telemetry cleanly off the UI thread and delivers
@@ -90,29 +92,59 @@ public final class TelemetryModel {
         }
     }
 
-    public static final long POLL_INTERVAL_MS = 120L;
+    public static final long POLL_INTERVAL_MS = 100L;
     private static final long SLOW_POLL_INTERVAL_MS = 1500L;
     private static final long HEAVY_POLL_INTERVAL_MS = 5000L;
-    private static final long MIN_POLL_SLEEP_MS = 35L;
+    private static final long MIN_POLL_SLEEP_MS = 30L;
+    private static final long UI_HEARTBEAT_MS = 1500L;
+    private static final int MAX_SWITCHER_TRANSIENT_MISSES = 5;
 
     public interface Listener {
         void onTelemetryUpdated(Snapshot snapshot);
     }
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final Object wakeLock = new Object();
+    private final Object stateLock = new Object();
     private final Set<String> extraKeys = new LinkedHashSet<String>();
     private final VehicleQueryClient directClient = new VehicleQueryClient();
     private final Map<String, String> mergedValues = new LinkedHashMap<String, String>();
+    private final AtomicReference<Snapshot> pendingUiSnapshot = new AtomicReference<Snapshot>();
+    private final AtomicBoolean uiPostPending = new AtomicBoolean(false);
     private volatile Listener listener;
     private volatile boolean polling = false;
+    private volatile AtomicBoolean activeRunToken;
     private volatile boolean needsFullSync = true;
     private volatile Snapshot latest = new Snapshot(false, null, "not polled");
+    private Map<String, String> lastDeliveredValues = Collections.emptyMap();
+    private boolean lastDeliveredConnected = false;
+    private String lastDeliveredError = "";
+    private long lastDeliveredAtMs = 0L;
+    private boolean switcherEverSucceeded = false;
+    private int switcherConsecutiveMisses = 0;
     private Thread worker;
+
+    private final Runnable uiDeliverRunnable = new Runnable() {
+        @Override
+        public void run() {
+            uiPostPending.set(false);
+            Snapshot snap = pendingUiSnapshot.getAndSet(null);
+            Listener target = listener;
+            if (polling && snap != null && target != null) {
+                target.onTelemetryUpdated(snap);
+            }
+        }
+    };
 
     public static String canonicalKey(String key) {
         if (key == null) return "";
         String k = key.trim();
         if ("hv_soc".equals(k)) return "hv.soc";
+        if ("hv_range".equals(k) || "hv.range_mi".equals(k) || "hv.range_km".equals(k)) return "hv.range";
+        if ("climate_temp_driver".equals(k)) return "climate.driver_temp";
+        if ("climate_temp_passenger".equals(k)) return "climate.passenger_temp";
+        if ("climate_fan".equals(k)) return "climate.fan_speed";
+        if ("volume".equals(k)) return "audio.volume";
         if ("aux12v_soc".equals(k)) return "battery12v.soc";
         if ("outside_temp_c".equals(k)) return "outside_temp";
         if ("hv_ready".equals(k)) return "hv.ready";
@@ -129,7 +161,7 @@ public final class TelemetryModel {
         if (keys != null) {
             for (String raw : keys) {
                 String k = canonicalKey(raw);
-                if (!"gear_speed".equals(k) && VehicleQueryClient.isValidKey(k)) {
+                if (!"gear_speed".equals(k) && VehicleQueryClient.isHmgApiDeclaredKey(k)) {
                     extraKeys.add(k);
                 }
             }
@@ -138,6 +170,13 @@ public final class TelemetryModel {
         needsFullSync = true;
         if (polling) {
             SwitcherClient.setVehicleKeysAsync(new ArrayList<String>(extraKeys));
+        }
+    }
+
+    public void requestImmediateRefresh() {
+        needsFullSync = true;
+        synchronized (wakeLock) {
+            wakeLock.notifyAll();
         }
     }
 
@@ -202,14 +241,19 @@ public final class TelemetryModel {
         }
         polling = true;
         needsFullSync = true;
+        synchronized (stateLock) {
+            lastDeliveredAtMs = 0L;
+            switcherConsecutiveMisses = 0;
+        }
+        final AtomicBoolean runToken = new AtomicBoolean(true);
+        activeRunToken = runToken;
         worker = new Thread(new Runnable() {
             @Override
             public void run() {
                 SwitcherClient.setVehicleKeysBlocking(snapshotExtraKeys());
-                long lastSlowMs = 0L;
-                long lastHeavyMs = 0L;
-                long lastSvcFallbackMs = 0L;
-                while (polling) {
+                long lastSlowMs = -SLOW_POLL_INTERVAL_MS;
+                long lastHeavyMs = -HEAVY_POLL_INTERVAL_MS;
+                while (runToken.get() && polling) {
                     long tickStartMs = SystemClock.elapsedRealtime();
                     boolean forceAll = needsFullSync;
                     if (forceAll) {
@@ -220,17 +264,26 @@ public final class TelemetryModel {
                     if (dueSlow) lastSlowMs = tickStartMs;
                     if (dueHeavy) lastHeavyMs = tickStartMs;
 
-                    Snapshot snap = fetchTiered(dueSlow, dueHeavy, tickStartMs, lastSvcFallbackMs);
-                    if (usedSvcFallbackOnLastPoll) {
-                        lastSvcFallbackMs = tickStartMs;
-                    }
-                    deliverSnapshot(snap);
-                    long elapsedMs = Math.max(0L, SystemClock.elapsedRealtime() - tickStartMs);
-                    long sleepMs = Math.max(MIN_POLL_SLEEP_MS, POLL_INTERVAL_MS - elapsedMs);
-                    try {
-                        Thread.sleep(sleepMs);
-                    } catch (InterruptedException ignored) {
+                    Snapshot snap = fetchTiered(dueSlow, dueHeavy, runToken);
+                    if (!runToken.get() || !polling) {
                         break;
+                    }
+                    long elapsedMs = Math.max(0L, SystemClock.elapsedRealtime() - tickStartMs);
+                    if (snap != null) {
+                        deliverSnapshot(snap);
+                    }
+                    long sleepMs = Math.max(MIN_POLL_SLEEP_MS, POLL_INTERVAL_MS - elapsedMs);
+                    synchronized (wakeLock) {
+                        if (!runToken.get() || !polling) {
+                            break;
+                        }
+                        if (!needsFullSync) {
+                            try {
+                                wakeLock.wait(sleepMs);
+                            } catch (InterruptedException ignored) {
+                                break;
+                            }
+                        }
                     }
                 }
             }
@@ -243,84 +296,139 @@ public final class TelemetryModel {
         latest = snap;
         final Listener target = listener;
         if (target != null) {
-            mainHandler.post(new Runnable() {
-                @Override
-                public void run() {
-                    if (polling) {
-                        target.onTelemetryUpdated(snap);
-                    }
-                }
-            });
+            pendingUiSnapshot.set(snap);
+            if (uiPostPending.compareAndSet(false, true)) {
+                mainHandler.post(uiDeliverRunnable);
+            }
         }
     }
 
     public synchronized void stop() {
         polling = false;
+        AtomicBoolean token = activeRunToken;
+        if (token != null) {
+            token.set(false);
+            activeRunToken = null;
+        }
+        mainHandler.removeCallbacks(uiDeliverRunnable);
+        uiPostPending.set(false);
+        pendingUiSnapshot.set(null);
+        synchronized (wakeLock) {
+            wakeLock.notifyAll();
+        }
         if (worker != null) {
             worker.interrupt();
             worker = null;
         }
     }
 
-    private boolean usedSvcFallbackOnLastPoll = false;
+    private static void mergeValidReadingsLocked(Map<String, String> dst, Map<String, String> src) {
+        if (src == null) {
+            return;
+        }
+        for (Map.Entry<String, String> e : src.entrySet()) {
+            String v = e.getValue();
+            if (v != null && !v.isEmpty() && !"-".equals(v)) {
+                dst.put(e.getKey(), v);
+            }
+        }
+    }
 
-    private Snapshot fetchTiered(boolean dueSlow, boolean dueHeavy, long nowMs, long lastSvcFallbackMs) {
-        usedSvcFallbackOnLastPoll = false;
+    private Snapshot maybeBuildChangedSnapshotLocked(boolean connected, String err) {
+        long nowMs = SystemClock.elapsedRealtime();
+        boolean sameState = (connected == lastDeliveredConnected)
+                && err.equals(lastDeliveredError)
+                && mergedValues.equals(lastDeliveredValues);
+        if (sameState && lastDeliveredAtMs > 0L && (nowMs - lastDeliveredAtMs) < UI_HEARTBEAT_MS) {
+            return null;
+        }
+        Map<String, String> copy = new LinkedHashMap<String, String>(mergedValues);
+        lastDeliveredValues = copy;
+        lastDeliveredConnected = connected;
+        lastDeliveredError = err;
+        lastDeliveredAtMs = nowMs;
+        return new Snapshot(connected, copy, err);
+    }
+
+    private Snapshot fetchTiered(boolean dueSlow, boolean dueHeavy, AtomicBoolean runToken) {
+        if (!runToken.get()) {
+            return null;
+        }
+        // Primary path: read unified 100ms Direct-Binder + HMG-API cache from root HomeSwitcher.
+        // Gives instant steering/pedal/speed/climate/seat/audio updates with zero Binder stall on the launcher.
+        SwitcherClient.VehicleReply cached = SwitcherClient.fetchVehicleBlocking();
+        if (!runToken.get()) {
+            return null;
+        }
+        synchronized (stateLock) {
+            if (cached.ok && !cached.values.isEmpty()) {
+                switcherEverSucceeded = true;
+                switcherConsecutiveMisses = 0;
+                mergeValidReadingsLocked(mergedValues, cached.values);
+                return maybeBuildChangedSnapshotLocked(true, "");
+            }
+
+            // Tolerate brief transient IPC misses once connected to HomeSwitcher without triggering
+            // fallback multi-threaded directClient queries.
+            if (switcherEverSucceeded && switcherConsecutiveMisses < MAX_SWITCHER_TRANSIENT_MISSES) {
+                switcherConsecutiveMisses++;
+                return null;
+            }
+        }
+
+        // Fallback path: if HomeSwitcher daemon is unavailable or warming up, query hmgapid directly.
         List<String> fastKeys = new ArrayList<String>();
         List<String> slowKeys = new ArrayList<String>();
         List<String> heavyKeys = new ArrayList<String>();
         buildTieredKeys(fastKeys, slowKeys, heavyKeys);
 
         StringBuilder errNote = new StringBuilder();
-        boolean anyOk = false;
+        if (!cached.error.isEmpty()) {
+            errNote.append("svc=").append(cached.error);
+        }
 
         VehicleQueryClient.BatchResult fastRes = directClient.query(fastKeys);
-        if (fastRes.anySuccess && !fastRes.values.isEmpty()) {
-            mergedValues.putAll(fastRes.values);
-            anyOk = true;
-        } else if (!fastRes.errorNote.isEmpty()) {
-            errNote.append("fast ").append(fastRes.errorNote);
+        VehicleQueryClient.BatchResult slowRes = (dueSlow && !slowKeys.isEmpty() && runToken.get())
+                ? directClient.query(slowKeys)
+                : null;
+        VehicleQueryClient.BatchResult heavyRes = (dueHeavy && !heavyKeys.isEmpty() && runToken.get())
+                ? directClient.query(heavyKeys)
+                : null;
+
+        if (!runToken.get()) {
+            return null;
         }
 
-        if (dueSlow && !slowKeys.isEmpty()) {
-            VehicleQueryClient.BatchResult slowRes = directClient.query(slowKeys);
-            if (slowRes.anySuccess && !slowRes.values.isEmpty()) {
-                mergedValues.putAll(slowRes.values);
-                anyOk = true;
-            } else if (!slowRes.errorNote.isEmpty() && errNote.length() < 120) {
+        synchronized (stateLock) {
+            if (fastRes.anySuccess && !fastRes.values.isEmpty()) {
+                mergeValidReadingsLocked(mergedValues, fastRes.values);
+            } else if (!fastRes.errorNote.isEmpty()) {
                 if (errNote.length() > 0) errNote.append("; ");
-                errNote.append("slow ").append(slowRes.errorNote);
+                errNote.append("fast ").append(fastRes.errorNote);
             }
-        }
 
-        if (dueHeavy && !heavyKeys.isEmpty()) {
-            VehicleQueryClient.BatchResult heavyRes = directClient.query(heavyKeys);
-            if (heavyRes.anySuccess && !heavyRes.values.isEmpty()) {
-                mergedValues.putAll(heavyRes.values);
-                anyOk = true;
-            } else if (!heavyRes.errorNote.isEmpty() && errNote.length() < 120) {
-                if (errNote.length() > 0) errNote.append("; ");
-                errNote.append("heavy ").append(heavyRes.errorNote);
+            if (slowRes != null) {
+                if (slowRes.anySuccess && !slowRes.values.isEmpty()) {
+                    mergeValidReadingsLocked(mergedValues, slowRes.values);
+                } else if (!slowRes.errorNote.isEmpty() && errNote.length() < 120) {
+                    if (errNote.length() > 0) errNote.append("; ");
+                    errNote.append("slow ").append(slowRes.errorNote);
+                }
             }
-        }
 
-        // Only wake root HomeSwitcher fallback if direct app->hmgapid failed or quarantined undeclared keys
-        boolean needFallback = !anyOk || (directClient.hasActiveQuarantinedKeys() && (nowMs - lastSvcFallbackMs) >= SLOW_POLL_INTERVAL_MS);
-        if (needFallback) {
-            usedSvcFallbackOnLastPoll = true;
-            SwitcherClient.VehicleReply cached = SwitcherClient.fetchVehicleBlocking();
-            if (cached.ok && !cached.values.isEmpty()) {
-                mergedValues.putAll(cached.values);
-                anyOk = true;
-            } else if (!cached.error.isEmpty()) {
-                if (errNote.length() > 0) errNote.append("; ");
-                errNote.append("svc=").append(cached.error);
+            if (heavyRes != null) {
+                if (heavyRes.anySuccess && !heavyRes.values.isEmpty()) {
+                    mergeValidReadingsLocked(mergedValues, heavyRes.values);
+                } else if (!heavyRes.errorNote.isEmpty() && errNote.length() < 120) {
+                    if (errNote.length() > 0) errNote.append("; ");
+                    errNote.append("heavy ").append(heavyRes.errorNote);
+                }
             }
-        }
 
-        if (!mergedValues.isEmpty()) {
-            return new Snapshot(true, new LinkedHashMap<String, String>(mergedValues), "");
+            if (!mergedValues.isEmpty()) {
+                return maybeBuildChangedSnapshotLocked(true, "");
+            }
+            return maybeBuildChangedSnapshotLocked(false, errNote.toString());
         }
-        return new Snapshot(false, null, errNote.toString());
     }
 }

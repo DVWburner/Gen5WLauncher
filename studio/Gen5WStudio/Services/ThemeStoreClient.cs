@@ -59,7 +59,8 @@ public static class ThemeStoreClient
     public const string DefaultBaseUrl = "https://market.ioniqthemes.com/";
     private const int MaxThumbnailBytes = 8 * 1024 * 1024;
 
-    private static readonly HttpClient Http = CreateHttpClient();
+    private static readonly HttpClient Http = CreateHttpClient(TimeSpan.FromSeconds(45));
+    private static readonly HttpClient UploadHttp = CreateHttpClient(TimeSpan.FromMinutes(5));
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNameCaseInsensitive = true
@@ -84,7 +85,7 @@ public static class ThemeStoreClient
         return res.Categories;
     }
 
-    private static HttpClient CreateHttpClient()
+    private static HttpClient CreateHttpClient(TimeSpan timeout)
     {
         var handler = new HttpClientHandler
         {
@@ -92,7 +93,7 @@ public static class ThemeStoreClient
         };
         var client = new HttpClient(handler)
         {
-            Timeout = TimeSpan.FromSeconds(45)
+            Timeout = timeout
         };
         client.DefaultRequestHeaders.UserAgent.ParseAdd($"Gen5WStudio/{PresetCatalog.StudioVersion}");
         client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
@@ -367,7 +368,7 @@ public static class ThemeStoreClient
 
         using var req = new HttpRequestMessage(HttpMethod.Post, uploadEndpoint) { Content = form };
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken.Trim());
-        using var resp = await Http.SendAsync(req, ct).ConfigureAwait(false);
+        using var resp = await UploadHttp.SendAsync(req, ct).ConfigureAwait(false);
 
         return await ReadApiResponseAsync(
             resp,

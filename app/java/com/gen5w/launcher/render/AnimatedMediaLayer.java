@@ -4,25 +4,28 @@ import android.content.Context;
 import android.content.res.AssetFileDescriptor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.BitmapShader;
 import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.Matrix;
 import android.graphics.Movie;
 import android.graphics.Paint;
+import android.graphics.PorterDuff;
 import android.graphics.Rect;
+import android.graphics.RectF;
+import android.graphics.Shader;
 import android.graphics.SurfaceTexture;
 import android.media.MediaPlayer;
 import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.Surface;
 import android.view.TextureView;
-import android.view.View;
 import android.widget.FrameLayout;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -32,8 +35,8 @@ import java.util.Locale;
  * animated tiles/panels.
  *
  * Supports:
- *  - "frames": JPEG/WebP/PNG frame sequence via dual-bitmap inBitmap ring (zero VPU/AudioFocus use!)
- *  - "gif":    Native Android Movie animated GIF
+ *  - "frames": JPEG/WebP/PNG frame sequence via 3-bitmap inBitmap ring (zero VPU/AudioFocus use!)
+ *  - "gif":    Native Android Movie animated GIF rasterized via software canvas (safe on KitKat GLES20Canvas)
  *  - "video":  Silent muted MP4/WebM TextureView playback with automatic fallback to poster/frames
  */
 public final class AnimatedMediaLayer extends FrameLayout {
@@ -47,8 +50,10 @@ public final class AnimatedMediaLayer extends FrameLayout {
     private Kind kind = Kind.NONE;
     private AssetResolver assets;
     private int dimAlpha = 0;
+    private float cornerRadiusPx = 0f;
+    private boolean externalPaused = false;
 
-    // Frame sequence state (ping-pong recycled buffers off UI thread)
+    // Frame sequence state (3-buffer ring off UI thread so GLES20DisplayList never races inBitmap)
     private final List<String> frameRefs = new ArrayList<String>();
     private int frameFps = 16;
     private boolean preferRgb565 = true;
@@ -57,11 +62,19 @@ public final class AnimatedMediaLayer extends FrameLayout {
     private volatile Bitmap frontBitmap;
     private final Object bitmapLock = new Object();
     private final Paint drawPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
-    private final Paint dimPaint = new Paint();
+    private final Paint shaderPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+    private final Paint dimPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Rect dstRect = new Rect();
+    private final RectF boundsRect = new RectF();
+    private final Matrix shaderMatrix = new Matrix();
+    private Bitmap shaderSourceBmp;
+    private BitmapShader cachedBmpShader;
 
-    // Native Movie (GIF) state
+    // Native Movie (GIF) state — drawn through software Bitmap to prevent KitKat GLES20Canvas native crash
     private Movie gifMovie;
     private long gifStartMs = 0L;
+    private Bitmap gifSoftBitmap;
+    private Canvas gifSoftCanvas;
 
     // Optional Video (silent TextureView) state
     private String videoRef = "";
@@ -78,13 +91,34 @@ public final class AnimatedMediaLayer extends FrameLayout {
         setWillNotDraw(false);
     }
 
+    public void setCornerRadiusPx(float radiusPx) {
+        float clamped = Math.max(0f, radiusPx);
+        if (Math.abs(this.cornerRadiusPx - clamped) > 0.1f) {
+            this.cornerRadiusPx = clamped;
+            invalidate();
+        }
+    }
+
+    public void setExternalPaused(boolean paused) {
+        if (this.externalPaused == paused) {
+            return;
+        }
+        this.externalPaused = paused;
+        syncPlaybackState();
+    }
+
     public void clear() {
         stopPlayback();
         kind = Kind.NONE;
         frameRefs.clear();
         gifMovie = null;
+        gifSoftCanvas = null;
+        gifSoftBitmap = null;
         videoRef = "";
         posterFallback = null;
+        shaderSourceBmp = null;
+        cachedBmpShader = null;
+        shaderPaint.setShader(null);
         synchronized (bitmapLock) {
             frontBitmap = null;
         }
@@ -145,18 +179,15 @@ public final class AnimatedMediaLayer extends FrameLayout {
         this.dimAlpha = Math.max(0, Math.min(240, dimAlpha));
         this.dimPaint.setColor((this.dimAlpha << 24) | 0x060B12);
         try {
-            InputStream in = resolver.openStream(gifAsset.trim());
-            if (in != null) {
-                try {
-                    Movie m = Movie.decodeStream(in);
-                    if (m != null && m.width() > 0 && m.height() > 0) {
-                        this.gifMovie = m;
-                        this.gifStartMs = SystemClock.uptimeMillis();
-                        this.kind = Kind.GIF;
-                        syncPlaybackState();
-                    }
-                } finally {
-                    in.close();
+            byte[] data = resolver.readAssetBytes(gifAsset.trim());
+            if (data != null && data.length > 0) {
+                Movie m = Movie.decodeByteArray(data, 0, data.length);
+                if (m != null && m.width() > 0 && m.height() > 0
+                        && m.width() <= 1920 && m.height() <= 1080) {
+                    this.gifMovie = m;
+                    this.gifStartMs = SystemClock.uptimeMillis();
+                    this.kind = Kind.GIF;
+                    syncPlaybackState();
                 }
             }
         } catch (Throwable ignored) {
@@ -232,12 +263,15 @@ public final class AnimatedMediaLayer extends FrameLayout {
     }
 
     private void syncPlaybackState() {
-        boolean visible = getWindowVisibility() == VISIBLE && getVisibility() == VISIBLE && getWindowToken() != null;
+        boolean visible = !externalPaused
+                && getWindowVisibility() == VISIBLE
+                && getVisibility() == VISIBLE
+                && getWindowToken() != null;
         syncPlaybackState(visible);
     }
 
     private void syncPlaybackState(boolean visible) {
-        if (!visible || kind == Kind.NONE) {
+        if (!visible || externalPaused || kind == Kind.NONE) {
             stopPlayback();
             return;
         }
@@ -267,20 +301,26 @@ public final class AnimatedMediaLayer extends FrameLayout {
         decodeThread = new Thread(new Runnable() {
             @Override
             public void run() {
-                Bitmap backBuffer = null;
+                Bitmap[] pool = new Bitmap[3];
+                int poolSlot = 0;
+                byte[] tempStorage = new byte[16 * 1024];
                 int index = 0;
                 long frameDelayMs = Math.max(25L, 1000L / frameFps);
                 while (workerRunning && !Thread.currentThread().isInterrupted()) {
                     long start = SystemClock.uptimeMillis();
                     String ref = frameRefs.get(index % frameRefs.size());
-                    Bitmap decoded = decodeFrame(ref, backBuffer);
+                    Bitmap candidate = pool[poolSlot];
+                    synchronized (bitmapLock) {
+                        if (candidate == frontBitmap) {
+                            candidate = null;
+                        }
+                    }
+                    Bitmap decoded = decodeFrame(ref, candidate, tempStorage);
                     if (decoded != null) {
+                        pool[poolSlot] = decoded;
+                        poolSlot = (poolSlot + 1) % pool.length;
                         synchronized (bitmapLock) {
-                            Bitmap prevFront = frontBitmap;
                             frontBitmap = decoded;
-                            if (prevFront != null && prevFront != decoded && prevFront.isMutable()) {
-                                backBuffer = prevFront;
-                            }
                         }
                         postInvalidate();
                     }
@@ -299,7 +339,7 @@ public final class AnimatedMediaLayer extends FrameLayout {
         decodeThread.start();
     }
 
-    private Bitmap decodeFrame(String ref, Bitmap reusable) {
+    private Bitmap decodeFrame(String ref, Bitmap reusable, byte[] tempStorage) {
         if (assets == null) {
             return null;
         }
@@ -311,6 +351,7 @@ public final class AnimatedMediaLayer extends FrameLayout {
             BitmapFactory.Options opts = new BitmapFactory.Options();
             opts.inMutable = true;
             opts.inSampleSize = 1;
+            opts.inTempStorage = tempStorage;
             opts.inPreferredConfig = preferRgb565 ? Bitmap.Config.RGB_565 : Bitmap.Config.ARGB_8888;
             if (reusable != null && !reusable.isRecycled()) {
                 opts.inBitmap = reusable;
@@ -431,41 +472,64 @@ public final class AnimatedMediaLayer extends FrameLayout {
                 bmp = frontBitmap;
             }
             if (bmp != null && !bmp.isRecycled()) {
-                drawCenterCrop(canvas, w, h, bmp);
+                drawCenterCrop(canvas, w, h, bmp, false);
             }
         } else if (kind == Kind.GIF && gifMovie != null) {
-            int dur = gifMovie.duration();
-            if (dur <= 0) dur = 1000;
-            int relTime = (int) ((SystemClock.uptimeMillis() - gifStartMs) % dur);
-            gifMovie.setTime(relTime);
-            float scale = Math.max((float) w / gifMovie.width(), (float) h / gifMovie.height());
-            float dx = (w - gifMovie.width() * scale) * 0.5f;
-            float dy = (h - gifMovie.height() * scale) * 0.5f;
-            canvas.save();
-            canvas.translate(dx, dy);
-            canvas.scale(scale, scale);
-            gifMovie.draw(canvas, 0f, 0f);
-            canvas.restore();
-            if (getWindowVisibility() == VISIBLE && getVisibility() == VISIBLE) {
-                postInvalidateOnAnimation();
+            int mw = gifMovie.width();
+            int mh = gifMovie.height();
+            if (mw > 0 && mh > 0) {
+                if (gifSoftBitmap == null || gifSoftBitmap.getWidth() != mw || gifSoftBitmap.getHeight() != mh) {
+                    gifSoftBitmap = Bitmap.createBitmap(mw, mh, Bitmap.Config.ARGB_8888);
+                    gifSoftCanvas = new Canvas(gifSoftBitmap);
+                }
+                int dur = gifMovie.duration();
+                if (dur <= 0) dur = 1000;
+                int relTime = (int) ((SystemClock.uptimeMillis() - gifStartMs) % dur);
+                gifMovie.setTime(relTime);
+                gifSoftCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
+                gifMovie.draw(gifSoftCanvas, 0f, 0f);
+                drawCenterCrop(canvas, w, h, gifSoftBitmap, true);
+                if (!externalPaused && getWindowVisibility() == VISIBLE && getVisibility() == VISIBLE) {
+                    postInvalidateOnAnimation();
+                }
             }
         } else if (kind == Kind.VIDEO && !videoPrepared && posterFallback != null) {
-            drawCenterCrop(canvas, w, h, posterFallback);
+            drawCenterCrop(canvas, w, h, posterFallback, false);
         }
 
         super.dispatchDraw(canvas);
 
         if (dimAlpha > 0) {
-            canvas.drawRect(0f, 0f, w, h, dimPaint);
+            boundsRect.set(0f, 0f, w, h);
+            if (cornerRadiusPx > 0.5f) {
+                canvas.drawRoundRect(boundsRect, cornerRadiusPx, cornerRadiusPx, dimPaint);
+            } else {
+                canvas.drawRect(boundsRect, dimPaint);
+            }
         }
     }
 
-    private void drawCenterCrop(Canvas canvas, int vw, int vh, Bitmap bmp) {
+    private void drawCenterCrop(Canvas canvas, int vw, int vh, Bitmap bmp, boolean mutableInPlace) {
         float scale = Math.max((float) vw / bmp.getWidth(), (float) vh / bmp.getHeight());
-        int dw = Math.round(bmp.getWidth() * scale);
-        int dh = Math.round(bmp.getHeight() * scale);
-        int left = (vw - dw) / 2;
-        int top = (vh - dh) / 2;
-        canvas.drawBitmap(bmp, null, new Rect(left, top, left + dw, top + dh), drawPaint);
+        float dw = bmp.getWidth() * scale;
+        float dh = bmp.getHeight() * scale;
+        float left = (vw - dw) * 0.5f;
+        float top = (vh - dh) * 0.5f;
+        if (cornerRadiusPx > 0.5f) {
+            if (mutableInPlace || shaderSourceBmp != bmp || cachedBmpShader == null) {
+                shaderSourceBmp = bmp;
+                cachedBmpShader = new BitmapShader(bmp, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
+            }
+            shaderMatrix.setScale(scale, scale);
+            shaderMatrix.postTranslate(left, top);
+            cachedBmpShader.setLocalMatrix(shaderMatrix);
+            shaderPaint.setShader(cachedBmpShader);
+            boundsRect.set(0f, 0f, vw, vh);
+            canvas.drawRoundRect(boundsRect, cornerRadiusPx, cornerRadiusPx, shaderPaint);
+            shaderPaint.setShader(null);
+        } else {
+            dstRect.set(Math.round(left), Math.round(top), Math.round(left + dw), Math.round(top + dh));
+            canvas.drawBitmap(bmp, null, dstRect, drawPaint);
+        }
     }
 }
