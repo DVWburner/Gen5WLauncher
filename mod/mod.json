@@ -1,11 +1,11 @@
 {
   "id": "gen5w-launcher",
-  "name": "Gen5W Custom Launcher",
+  "name": "Gen5W Theme Launcher",
   "version": "0.4.8",
   "hmgapi": ">=1.0.2",
   "authors": ["Gen5WLauncher"],
   "license": "MIT",
-  "description": "Standalone customizable HOME launcher with data-driven layouts, SVG icons, subtle animations, live EV telemetry via HMG-API, and 5-layer failsafe protection.",
+  "description": "Replaces the main homescreen. Download and make custom themes from https://market.ioniqthemes.com",
   "system": {
     "android": "4.4.2"
   },

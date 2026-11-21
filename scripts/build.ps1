@@ -304,10 +304,10 @@ New-Item -ItemType Directory -Force -Path $NemesisScripts, $NemesisBin, $Nemesis
 $TemplateIn = [System.IO.File]::ReadAllText((Join-Path $HmgApiRef "install\nemesis\mod\NEMESIS.data.in"), [System.Text.Encoding]::UTF8)
 $Descriptor = $TemplateIn.
     Replace("@PACKAGE_ID@", $NemesisPkgId).
-    Replace("@NAME@", "Gen5W Custom Launcher").
+    Replace("@NAME@", "Gen5W Theme Launcher").
     Replace("@PACKAGE_VERSION@", $Version).
-    Replace("@SHORT_DESC@", "HMG-API mod: Gen5W Custom Launcher").
-    Replace("@DETAILED_DESC@", "Gen5W Custom Launcher $Version, a HMG-API mod (needs HMG-API). Standalone customizable HOME launcher with EV telemetry and 5-layer failsafe.").
+    Replace("@SHORT_DESC@", "Themed Homescreen Replacement").
+    Replace("@DETAILED_DESC@", "Replaces the main homescreen. Download and make custom themes from https://market.ioniqthemes.com").
     Replace("@OS@", "any").
     Replace("@DEPENDS@", "hmgapi@>=1.0")
 Write-Utf8Lf (Join-Path $NemesisStage "NEMESIS.data") $Descriptor
@@ -338,7 +338,7 @@ Write-Utf8Lf (Join-Path $NemesisStickStage "NEMESIS.data") "[nemesis]`nversion=1
 
 $ReadmeIn = [System.IO.File]::ReadAllText((Join-Path $HmgApiRef "install\nemesis\mod\README.txt"), [System.Text.Encoding]::UTF8)
 $ReadmeOut = $ReadmeIn.
-    Replace("@NAME@", "Gen5W Custom Launcher").
+    Replace("@NAME@", "Gen5W Theme Launcher").
     Replace("@VERSION@", $Version).
     Replace("@PACKAGE_ID@", $NemesisPkgId)
 Write-Utf8Lf (Join-Path $NemesisStickStage "README.txt") $ReadmeOut
