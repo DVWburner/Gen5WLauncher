@@ -6,7 +6,7 @@ Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 $Root = Split-Path -Parent $PSScriptRoot
-$Version = "0.4.8"
+$Version = "0.4.9"
 $ModId = "gen5w-launcher"
 
 # Cross-check version consistency across mod.json, AndroidManifest.xml, and HomeSwitcher.java
@@ -446,6 +446,7 @@ $HostTestDir = Join-Path $BuildDir "host-test-classes"
 New-Item -ItemType Directory -Force -Path $HostTestDir | Out-Null
 $HostTestSrcs = @(
     (Join-Path $HmgApiRef "core\runtime\java\hmgapi\engine\Json.java"),
+    (Join-Path $Root "shared\java\com\gen5w\launcher\ipc\TemperatureNormalizer.java"),
     (Join-Path $Root "app\java\com\gen5w\launcher\store\StoreTlsHelper.java"),
     (Join-Path $Root "app\java\com\gen5w\launcher\store\StoreThemeListing.java"),
     (Join-Path $Root "app\java\com\gen5w\launcher\store\ThemeStoreClient.java"),

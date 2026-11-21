@@ -5,6 +5,8 @@ import android.os.IBinder;
 import android.os.Parcel;
 import android.os.RemoteException;
 
+import com.gen5w.launcher.ipc.TemperatureNormalizer;
+
 import hmgapi.client.HmgApi;
 
 import java.io.File;
@@ -117,8 +119,13 @@ final class DirectCarServiceBridge {
     private volatile Method mAmbientF;
     private volatile Method mAmbientC;
     private volatile Method mAmbientStateC;
+    private volatile Method mAmbientStateF;
+    private volatile Method mDatcStatusTempUnit;
     private volatile int datcOutsideF10 = Integer.MIN_VALUE;
     private volatile int datcOutsideC10 = Integer.MIN_VALUE;
+    private volatile int datcAmbientStateC = 0;
+    private volatile int datcAmbientStateF = 0;
+    private volatile int datcStatusTempUnit = 0;
 
     private volatile int txBcmDoorAll = -1;
     private volatile int txBcmDoorLock = -1;
@@ -298,29 +305,49 @@ final class DirectCarServiceBridge {
         // On Gen5W CAN-DB Gen1+, getTemperatureUnit() stays 0; getVRClimateStatus(13) reads mDatcBypassStatusCache (1=C, 2=F).
         Float fUnit = callDatcStatus(13);
         int unitCode = (fUnit != null && !Float.isNaN(fUnit)) ? Math.round(fUnit) : 0;
+        if (unitCode != 1 && unitCode != 2 && (datcStatusTempUnit == 1 || datcStatusTempUnit == 2)) {
+            unitCode = datcStatusTempUnit;
+        }
         if (unitCode != 1 && unitCode != 2) {
             Integer legacyUnit = callIntNoArg(SVC_DATC, IFACE_DATC, "getTemperatureUnit", false);
             if (legacyUnit != null && (legacyUnit == 1 || legacyUnit == 2)) {
                 unitCode = legacyUnit.intValue();
             }
         }
+        Float fDrvPre = callDatcStatus(2);
         boolean celsius;
         if (unitCode == 1 || unitCode == 2) {
             celsius = (unitCode == 1);
             lastKnownCelsius = Boolean.valueOf(celsius);
+        } else if (fDrvPre != null && !Float.isNaN(fDrvPre) && fDrvPre >= 14f && fDrvPre <= 36f) {
+            celsius = true;
+            lastKnownCelsius = Boolean.TRUE;
+        } else if (fDrvPre != null && !Float.isNaN(fDrvPre) && fDrvPre >= 56f && fDrvPre <= 95f) {
+            celsius = false;
+            lastKnownCelsius = Boolean.FALSE;
         } else if (lastKnownCelsius != null) {
             celsius = lastKnownCelsius.booleanValue();
         } else {
-            celsius = false;
+            // Infer from ambient state if available: US cars report stateC == 255, Celsius cars report stateF == 255 or -40F
+            int stC = datcAmbientStateC;
+            int stF = datcAmbientStateF;
+            celsius = (stC != 255 && stC != -1 && datcOutsideC10 != Integer.MIN_VALUE)
+                    && (stF == 255 || stF == -1 || (datcOutsideF10 == -400 && datcOutsideC10 != -400));
         }
         out.put("climate.temp_unit", celsius ? "C" : "F");
 
         int f10 = datcOutsideF10;
         int c10 = datcOutsideC10;
-        if (f10 != Integer.MIN_VALUE) {
-            out.put("outside_temp_f", formatCompactFloat(f10 / 10f));
-            float cVal = (c10 != Integer.MIN_VALUE) ? (c10 / 10f) : (((f10 / 10f) - 32f) * 5f / 9f);
-            out.put("outside_temp", formatCompactFloat(cVal));
+        if (f10 != Integer.MIN_VALUE || c10 != Integer.MIN_VALUE) {
+            float rawC = (c10 == Integer.MIN_VALUE) ? Float.NaN : (c10 / 10f);
+            float rawF = (f10 == Integer.MIN_VALUE) ? Float.NaN : (f10 / 10f);
+            TemperatureNormalizer.resolveAmbientPair(
+                    rawC,
+                    c10 == Integer.MIN_VALUE ? 255 : datcAmbientStateC,
+                    rawF,
+                    f10 == Integer.MIN_VALUE ? 255 : datcAmbientStateF,
+                    celsius ? "C" : "F",
+                    out);
         }
 
         Integer drvOnly = callIntNoArg(SVC_DATC, IFACE_DATC, "getDriverOnlyValue", false);
@@ -1330,6 +1357,14 @@ final class DirectCarServiceBridge {
                 mAmbientF = stCls.getMethod("getAmbientTempF");
                 mAmbientC = stCls.getMethod("getAmbientTempC");
                 mAmbientStateC = stCls.getMethod("getAmbientTempStateC");
+                try {
+                    mAmbientStateF = stCls.getMethod("getAmbientTempStateF");
+                } catch (Throwable ignored) {
+                }
+                try {
+                    mDatcStatusTempUnit = stCls.getMethod("getTempUnit");
+                } catch (Throwable ignored) {
+                }
             }
             txDatcStatus = resolveListenerTx(IFACE_DATC_LISTENER, "onDatcStatus", 1);
             if (datcListenerToken == null) {
@@ -1355,12 +1390,23 @@ final class DirectCarServiceBridge {
                                     float f = ((Float) mAmbientF.invoke(st)).floatValue();
                                     float cc = ((Float) mAmbientC.invoke(st)).floatValue();
                                     int stateC = ((Integer) mAmbientStateC.invoke(st)).intValue();
-                                    if (!Float.isNaN(f) && f >= -60f && f <= 160f) {
-                                        datcOutsideF10 = Math.round(f * 10f);
-                                        datcOutsideC10 = (stateC == 255 || Float.isNaN(cc))
-                                                ? Integer.MIN_VALUE
-                                                : Math.round(cc * 10f);
+                                    int stateF = mAmbientStateF != null
+                                            ? ((Integer) mAmbientStateF.invoke(st)).intValue()
+                                            : 0;
+                                    if (mDatcStatusTempUnit != null) {
+                                        int tu = ((Integer) mDatcStatusTempUnit.invoke(st)).intValue();
+                                        if (tu == 1 || tu == 2) {
+                                            datcStatusTempUnit = tu;
+                                        }
                                     }
+                                    datcAmbientStateC = stateC;
+                                    datcAmbientStateF = stateF;
+                                    datcOutsideF10 = (stateF == 255 || stateF == -1 || Float.isNaN(f) || f < -60f || f > 160f)
+                                            ? Integer.MIN_VALUE
+                                            : Math.round(f * 10f);
+                                    datcOutsideC10 = (stateC == 255 || stateC == -1 || Float.isNaN(cc) || cc < -50f || cc > 65f)
+                                            ? Integer.MIN_VALUE
+                                            : Math.round(cc * 10f);
                                 }
                             }
                         } catch (Throwable ignored) {

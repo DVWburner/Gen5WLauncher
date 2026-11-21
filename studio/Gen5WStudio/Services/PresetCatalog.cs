@@ -39,7 +39,7 @@ public sealed class ActionPresetOption
 
 public static class PresetCatalog
 {
-    public const string StudioVersion = "0.4.8";
+    public const string StudioVersion = "0.4.9";
     public const string DefaultMinAppVersion = "0.4.0";
 
     public static IReadOnlyList<string> ThemeCategories { get; } = new List<string>

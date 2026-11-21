@@ -8,7 +8,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>Gen5WStudio</AssemblyName>
     <RootNamespace>Gen5WStudio</RootNamespace>
-    <Version>0.4.8</Version>
+    <Version>0.4.9</Version>
   </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="Assets\gen5w-launcher-nemesis.zip" Condition="Exists('Assets\gen5w-launcher-nemesis.zip')" />

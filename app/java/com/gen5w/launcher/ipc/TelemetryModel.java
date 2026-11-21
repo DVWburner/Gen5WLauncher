@@ -343,6 +343,7 @@ public final class TelemetryModel {
             return null;
         }
         Map<String, String> copy = new LinkedHashMap<String, String>(mergedValues);
+        TemperatureNormalizer.normalizeVehicleMap(copy);
         lastDeliveredValues = copy;
         lastDeliveredConnected = connected;
         lastDeliveredError = err;

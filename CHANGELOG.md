@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.4.9 — 2026-11-20
+
+### Bug Fixes
+- **Fixed `-40°F` Ambient Temperature Bug on Celsius (`°C`) Vehicles & Cross-Unit HVAC Conversion (`TemperatureNormalizer`, `DirectCarServiceBridge`, `HomeSwitcher`, `TelemetryModel`, `LayoutEngine`):**
+  - On Celsius Gen5W vehicles (Canada, Europe, UK, Australia, Korea, or vehicles set to `°C`), Hyundai's `DATCService` leaves the unused `DATC_AmbientTempF` CAN byte at `0x00` and computes `0 - 0x28 = -40.0°F` while `getAmbientTempC()` holds the real ambient temperature (e.g. `14.0°C`).
+  - Added hardware-verified `getAmbientTempStateF()` + `getTempUnit()` inspection in `DirectCarServiceBridge` and multi-layer normalization (`TemperatureNormalizer`) in `HomeSwitcher` and `TelemetryModel` (including raw `HMG-API` readings) so `14°C` accurately converts to `57°F` across all `°F` themes and `weather_badge` widgets (and symmetrically for `°C` themes on `°F` cars, while still preserving genuine `-40°` readings).
+  - Fixed `climate.driver_temp` and `climate.passenger_temp` in `LayoutEngine` so themes specifying an explicit `°F` or `°C` unit override automatically convert from the vehicle's native HVAC unit (`21.5°C -> 71°F`, `72°F -> 22°C`).
+
+---
+
 ## v0.4.8 — 2026-11-20
 
 Major feature, stability, telemetry, and Studio upgrade since `v0.3.9`.

@@ -1,7 +1,7 @@
 {
   "id": "gen5w-launcher",
   "name": "Gen5W Theme Launcher",
-  "version": "0.4.8",
+  "version": "0.4.9",
   "hmgapi": ">=1.0.2",
   "authors": ["Gen5WLauncher"],
   "license": "MIT",

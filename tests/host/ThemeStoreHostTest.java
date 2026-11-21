@@ -1,3 +1,4 @@
+import com.gen5w.launcher.ipc.TemperatureNormalizer;
 import com.gen5w.launcher.render.SafeThemeZipExtractor;
 import com.gen5w.launcher.store.StoreThemeListing;
 import com.gen5w.launcher.store.StoreTlsHelper;
@@ -66,6 +67,7 @@ public final class ThemeStoreHostTest {
             testTlsRootsEmbedded();
             testCompatibilityAndFormatting();
             testBundledDefaultPackContainsThemeStore();
+            testTemperatureNormalizerCrossUnit();
             testStoreHttpMockClient(tmpRoot);
             testSafeZipExtractorPassAndSecurity(tmpRoot);
             if (runLive) {
@@ -406,6 +408,49 @@ public final class ThemeStoreHostTest {
         StringBuilder sb = new StringBuilder();
         for (byte x : d) sb.append(String.format("%02x", x & 0xFF));
         return sb.toString();
+    }
+
+    private static void testTemperatureNormalizerCrossUnit() {
+        // 1. Exact user-reported bug: Celsius car at 14.0°C where unpopulated Fahrenheit CAN byte decodes to -40.0°F
+        Map<String, String> celsiusCar = new LinkedHashMap<String, String>();
+        celsiusCar.put("outside_temp", "14.0");
+        celsiusCar.put("outside_temp_f", "-40.0");
+        TemperatureNormalizer.normalizeVehicleMap(celsiusCar);
+        check("14".equals(celsiusCar.get("outside_temp")), "Expected outside_temp=14, got " + celsiusCar.get("outside_temp"));
+        check("57".equals(celsiusCar.get("outside_temp_f")), "Expected outside_temp_f=57 for 14C, got " + celsiusCar.get("outside_temp_f"));
+
+        // 2. Cold winter Celsius car at -38.0°C (climate.temp_unit=C) with unpopulated -40.0°F channel
+        Map<String, String> winterCelsiusCar = new LinkedHashMap<String, String>();
+        winterCelsiusCar.put("climate.temp_unit", "C");
+        winterCelsiusCar.put("outside_temp", "-38.0");
+        winterCelsiusCar.put("outside_temp_f", "-40.0");
+        TemperatureNormalizer.normalizeVehicleMap(winterCelsiusCar);
+        check("-38".equals(winterCelsiusCar.get("outside_temp")), "Expected -38C, got " + winterCelsiusCar.get("outside_temp"));
+        check("-36".equals(winterCelsiusCar.get("outside_temp_f")), "Expected -36F for -38C, got " + winterCelsiusCar.get("outside_temp_f"));
+
+        // 3. Genuine -40°C / -40°F extreme cold stays -40 in both
+        Map<String, String> realMinus40 = new LinkedHashMap<String, String>();
+        realMinus40.put("outside_temp", "-40.0");
+        realMinus40.put("outside_temp_f", "-40.0");
+        TemperatureNormalizer.normalizeVehicleMap(realMinus40);
+        check("-40".equals(realMinus40.get("outside_temp")), "Expected -40C");
+        check("-40".equals(realMinus40.get("outside_temp_f")), "Expected -40F");
+
+        // 4. US Fahrenheit car at 73°F where Celsius state=255 or -40.0°C
+        Map<String, String> usCar = new LinkedHashMap<String, String>();
+        TemperatureNormalizer.resolveAmbientPair(-40.0f, 255, 73.0f, 113, "F", usCar);
+        check("73".equals(usCar.get("outside_temp_f")), "Expected 73F, got " + usCar.get("outside_temp_f"));
+        check("23".equals(usCar.get("outside_temp")), "Expected 23C for 73F, got " + usCar.get("outside_temp"));
+
+        // 5. Cabin HVAC target temperature conversion (°C car <-> °F theme and vice versa)
+        check(Math.round(TemperatureNormalizer.convertClimateTemp(21.5f, "C", "\u00B0F")) == 71,
+                "Expected 21.5C -> 71F");
+        check(Math.abs(TemperatureNormalizer.convertClimateTemp(72f, "F", "\u00B0C") - 22.0f) < 0.01f,
+                "Expected 72F -> 22.0C");
+        check(Math.abs(TemperatureNormalizer.convertClimateTemp(21.5f, "C", "") - 21.5f) < 0.01f,
+                "Empty unit override must preserve car native unit");
+
+        System.out.println("ok  TemperatureNormalizer: 14C/-40F bug -> 57F, US 73F -> 23C, real -40, & HVAC C<->F verified");
     }
 
     private static void check(boolean cond, String msg) {

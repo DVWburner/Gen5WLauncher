@@ -13,18 +13,18 @@
 
 Two separate ZIP packages are provided on each release:
 
-### 1. In-Car Installer Only (`Gen5WLauncher-v0.4.8-Car-USB-Installer.zip`)
+### 1. In-Car Installer Only (`Gen5WLauncher-v0.4.9-Car-USB-Installer.zip`)
 *For users who just want to install the launcher on their car and download themes directly in-car from the built-in **Theme Store**.*
 - Contains `NEMESIS.data`, `packages/hmgapi.gen5w-launcher.zip`, and `README.txt`.
 - Unzip directly to the root of a **FAT32** or **exFAT** USB drive and plug it into the head unit to install/update via **NEMESIS** (requires **HMG-API `>= 1.0.2`**).
 - After installing, press your physical **HOME** button once — Android's native *"Select a Home app"* chooser pops up so you can pick **Gen5W Home** (`Just once` or `Always`).
 - Tap the **Theme Store** tile front-and-center to browse and install community themes directly on the car, or visit **[market.ioniqthemes.com](https://market.ioniqthemes.com)** on your PC to build and share your own themes.
 
-### 2. Windows Theme Studio (`Gen5WStudio-v0.4.8-win-x64.zip`)
+### 2. Windows Theme Studio (`Gen5WStudio-v0.4.9-win-x64.zip`)
 *For theme creators and customizers on Windows 10/11 (x64).*
 - **Prerequisite:** Requires the Microsoft **.NET 10 Windows Desktop Runtime (x64)** (`Microsoft.WindowsDesktop.App` `10.0.0`).
 - **Usage:** Unzip all 4 files (`Gen5WStudio.exe`, `Gen5WStudio.dll`, `Gen5WStudio.runtimeconfig.json`, `Gen5WStudio.deps.json`) together into the same folder and launch `Gen5WStudio.exe`.
-- Includes embedded starter templates/SVG icons, live interactive preview, frame/GIF/video backdrop converter, built-in **AI Context** theme-builder prompt generator, Theme Store publisher (`https://market.ioniqthemes.com`), and **Export to USB...** (with the `v0.4.8` NEMESIS USB installer already bundled inside).
+- Includes embedded starter templates/SVG icons, live interactive preview, frame/GIF/video backdrop converter, built-in **AI Context** theme-builder prompt generator, Theme Store publisher (`https://market.ioniqthemes.com`), and **Export to USB...** (with the `v0.4.9` NEMESIS USB installer already bundled inside).
 
 ---
 
@@ -52,7 +52,7 @@ Two separate ZIP packages are provided on each release:
 
 1. **Create an emergency recovery USB stick first:** Place an empty file named `REVERT_LAUNCHER.txt` in the root of a spare FAT32/exFAT USB stick and keep it handy.
 2. Ensure **HMG-API `>= 1.0.2`** is installed on your NEMESIS-equipped head unit.
-3. Unzip `Gen5WLauncher-v0.4.8-Car-USB-Installer.zip` onto the root of a USB drive (or use Studio's **Export to USB...** with Option 3 checked) and plug it into the head unit to install via NEMESIS.
+3. Unzip `Gen5WLauncher-v0.4.9-Car-USB-Installer.zip` onto the root of a USB drive (or use Studio's **Export to USB...** with Option 3 checked) and plug it into the head unit to install via NEMESIS.
 4. Press the physical **HOME** button once — select **Gen5W Home** (`Just once` to preview first, or `Always` to set as your default launcher).
 5. Tap **Theme Store** to browse and install community themes on the car, or visit **[market.ioniqthemes.com](https://market.ioniqthemes.com)** on your PC to create your own themes with **Gen5W Studio**.
 

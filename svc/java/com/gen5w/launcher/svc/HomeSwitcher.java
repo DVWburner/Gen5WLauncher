@@ -7,6 +7,7 @@ import android.net.LocalSocket;
 import android.os.SystemClock;
 import android.util.Base64;
 
+import com.gen5w.launcher.ipc.TemperatureNormalizer;
 import com.gen5w.launcher.ipc.VehicleQueryClient;
 
 import hmgapi.client.HmgApi;
@@ -58,7 +59,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class HomeSwitcher {
     static final String SOCKET_NAME = "gen5w_launcher_ctl";
     private static final String CUSTOM_PKG = "com.gen5w.launcher";
-    private static final int EXPECTED_APP_VERSION_CODE = 24;
+    private static final int EXPECTED_APP_VERSION_CODE = 25;
     private static final int MAX_IPC_LINE_BYTES = 16384;
     private static final long LOOP_TICK_MS = 2_000L;
     private static final long BOOT_GRACE_MS = 10_000L;
@@ -771,6 +772,7 @@ public final class HomeSwitcher {
                 mergedVehicleValues.put(e.getKey(), v);
             }
         }
+        TemperatureNormalizer.normalizeVehicleMap(mergedVehicleValues);
 
         JSONObject vals = new JSONObject();
         for (Map.Entry<String, String> entry : mergedVehicleValues.entrySet()) {

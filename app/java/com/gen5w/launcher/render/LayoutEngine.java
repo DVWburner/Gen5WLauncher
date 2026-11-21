@@ -24,6 +24,7 @@ import android.widget.TextView;
 
 import com.gen5w.launcher.ipc.SwitcherClient;
 import com.gen5w.launcher.ipc.TelemetryModel;
+import com.gen5w.launcher.ipc.TemperatureNormalizer;
 import com.gen5w.launcher.model.ActionSpec;
 import com.gen5w.launcher.model.IndicatorStyle;
 import com.gen5w.launcher.model.LayoutNode;
@@ -507,6 +508,8 @@ public final class LayoutEngine {
                 float val = Float.parseFloat(raw);
                 if ("hv.battery_temp_min".equals(k) && shouldPackTempUseFahrenheit(key, u)) {
                     val = val * 9f / 5f + 32f;
+                } else if ("climate.driver_temp".equals(k) || "climate.passenger_temp".equals(k)) {
+                    val = TemperatureNormalizer.convertClimateTemp(val, s.getRaw("climate.temp_unit"), u);
                 } else if ("outside_temp".equals(k) && u.toUpperCase(Locale.US).contains("F")) {
                     val = val * 9f / 5f + 32f;
                 } else if ("outside_temp_f".equals(k) && u.toUpperCase(Locale.US).contains("C")) {
@@ -542,16 +545,38 @@ public final class LayoutEngine {
                 return Math.round(v) + (u.isEmpty() ? defSuff : u);
             }
             if ("outside_temp_f".equals(k)) {
-                if ("--".equals(s.outsideTempF)) return fmtTemp(s);
-                return !u.isEmpty() && u.toUpperCase(Locale.US).contains("C")
-                        ? Math.round(parseTelemetryNumeric(k, u, s, 0f)) + u
-                        : stripTrailingZero(s.outsideTempF) + (u.isEmpty() ? "\u00B0F" : u);
+                boolean wantC = !u.isEmpty() && u.toUpperCase(Locale.US).contains("C") && !u.toUpperCase(Locale.US).contains("F");
+                String suff = u.isEmpty() ? "\u00B0F" : u;
+                if (wantC) {
+                    if (!"--".equals(s.outsideTempC)) return stripTrailingZero(s.outsideTempC) + suff;
+                    if (!"--".equals(s.outsideTempF)) return Math.round(parseTelemetryNumeric(k, u, s, 0f)) + suff;
+                    return "--" + suff;
+                }
+                if (!"--".equals(s.outsideTempF)) {
+                    return stripTrailingZero(s.outsideTempF) + suff;
+                }
+                if (!"--".equals(s.outsideTempC)) {
+                    float f = parseTelemetryNumeric("outside_temp", "F", s, Float.NaN);
+                    if (!Float.isNaN(f)) return Math.round(f) + suff;
+                }
+                return "--" + suff;
             }
             if ("outside_temp".equals(k)) {
-                if ("--".equals(s.outsideTempC)) return fmtTemp(s);
-                return !u.isEmpty() && u.toUpperCase(Locale.US).contains("F")
-                        ? Math.round(parseTelemetryNumeric(k, u, s, 0f)) + u
-                        : stripTrailingZero(s.outsideTempC) + (u.isEmpty() ? "\u00B0C" : u);
+                boolean wantF = !u.isEmpty() && u.toUpperCase(Locale.US).contains("F") && !u.toUpperCase(Locale.US).contains("C");
+                String suff = u.isEmpty() ? "\u00B0C" : u;
+                if (wantF) {
+                    if (!"--".equals(s.outsideTempF)) return stripTrailingZero(s.outsideTempF) + suff;
+                    if (!"--".equals(s.outsideTempC)) return Math.round(parseTelemetryNumeric(k, u, s, 0f)) + suff;
+                    return "--" + suff;
+                }
+                if (!"--".equals(s.outsideTempC)) {
+                    return stripTrailingZero(s.outsideTempC) + suff;
+                }
+                if (!"--".equals(s.outsideTempF)) {
+                    float c = parseTelemetryNumeric("outside_temp_f", "C", s, Float.NaN);
+                    if (!Float.isNaN(c)) return TemperatureNormalizer.formatCompact(Math.round(c * 2f) / 2f) + suff;
+                }
+                return "--" + suff;
             }
             if ("odometer".equals(k)) {
                 boolean useMi = shouldUseMph(rawKey, u);
@@ -640,11 +665,21 @@ public final class LayoutEngine {
                 if ("OFF".equalsIgnoreCase(r) || "LO".equalsIgnoreCase(r) || "HI".equalsIgnoreCase(r)) {
                     return r.toUpperCase(Locale.US);
                 }
-                if (!u.isEmpty()) return stripTrailingZero(r) + u;
                 String tUnit = s.getRaw("climate.temp_unit");
-                String deg = "C".equalsIgnoreCase(tUnit) ? "\u00B0C"
-                        : ("F".equalsIgnoreCase(tUnit) ? "\u00B0F" : (preferCelsius ? "\u00B0C" : "\u00B0F"));
-                return stripTrailingZero(r) + deg;
+                try {
+                    float rawVal = Float.parseFloat(r);
+                    float conv = TemperatureNormalizer.convertClimateTemp(rawVal, tUnit, u);
+                    if (!u.isEmpty()) {
+                        return TemperatureNormalizer.formatCompact(conv) + u;
+                    }
+                    boolean carIsC = TemperatureNormalizer.isClimateValueCelsius(rawVal, tUnit);
+                    return TemperatureNormalizer.formatCompact(conv) + (carIsC ? "\u00B0C" : "\u00B0F");
+                } catch (NumberFormatException ignored) {
+                    if (!u.isEmpty()) return stripTrailingZero(r) + u;
+                    String deg = "C".equalsIgnoreCase(tUnit) ? "\u00B0C"
+                            : ("F".equalsIgnoreCase(tUnit) ? "\u00B0F" : (preferCelsius ? "\u00B0C" : "\u00B0F"));
+                    return stripTrailingZero(r) + deg;
+                }
             }
             if ("climate.fan_speed".equals(k)) {
                 String r = s.getRaw(k);
