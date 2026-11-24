@@ -319,7 +319,7 @@
                                 <!-- WIDGET CONTENT & TELEMETRY -->
                                 <StackPanel x:Name="WidgetFieldsGroup">
                                     <StackPanel x:Name="ContentSensorSection">
-                                        <TextBlock x:Name="ContentHeaderText" Text="Content &amp; Sensor Data (HMG-API)" FontWeight="Bold" Foreground="#FF7DD3FC" Margin="0,12,0,2" />
+                                        <TextBlock x:Name="ContentHeaderText" Text="Content &amp; Sensor Data (Live Telemetry)" FontWeight="Bold" Foreground="#FF7DD3FC" Margin="0,12,0,2" />
                                         <StackPanel x:Name="TitleFieldGroup">
                                             <TextBlock Text="Text / Title (supports {value} or {hv.soc}, {battery12v.soc}, etc.)" Style="{StaticResource FieldLabel}" />
                                             <TextBox x:Name="TitleBox" LostFocus="OnInspectorTextApplied" />

@@ -10,18 +10,19 @@ import android.util.Base64;
 import com.gen5w.launcher.ipc.TemperatureNormalizer;
 import com.gen5w.launcher.ipc.VehicleQueryClient;
 
-import hmgapi.client.HmgApi;
-
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.File;
 import java.io.FileDescriptor;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -48,8 +49,9 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Root Dalvik service started by hmgapid after Android boots (sys.boot_completed=1).
- * Manages preferred HOME switching and enforces all 5 failsafe layers:
+ * Standalone root Dalvik service started by NEMESIS svcmgr after Android boots (sys.boot_completed=1).
+ * Manages preferred HOME switching, enforces all 5 failsafe layers, and bridges all vehicle telemetry & commands
+ * directly via OEM Binder services with zero external mod framework dependency.
  *   1. USB Kill-Switch (REVERT_LAUNCHER.txt / SAFE_MODE.txt)
  *   2. Persistent boot-strike breaker (strikes >= 2)
  *   3. 10s cold-boot grace window before activation
@@ -59,7 +61,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class HomeSwitcher {
     static final String SOCKET_NAME = "gen5w_launcher_ctl";
     private static final String CUSTOM_PKG = "com.gen5w.launcher";
-    private static final int EXPECTED_APP_VERSION_CODE = 25;
+    private static final int EXPECTED_APP_VERSION_CODE = 27;
     private static final int MAX_IPC_LINE_BYTES = 16384;
     private static final long LOOP_TICK_MS = 2_000L;
     private static final long BOOT_GRACE_MS = 10_000L;
@@ -67,7 +69,6 @@ public final class HomeSwitcher {
     private static final long DEADMAN_TIMEOUT_MS = 45_000L;
     private static final long FAST_VEHICLE_POLL_MS = 100L;
     private static final long EXTENDED_VEHICLE_POLL_MS = 500L;
-    private static final long HMG_VEHICLE_POLL_MS = 1200L;
     private static final long IDLE_VEHICLE_POLL_MS = 2000L;
     private static final long VEHICLE_DEMAND_WINDOW_MS = 5000L;
     private static final long CAR_CMD_TIMEOUT_MS = 1800L;
@@ -98,16 +99,13 @@ public final class HomeSwitcher {
                 new DaemonThreadFactory("home-switcher-carcmd-"));
     }
 
-    private final VehicleQueryClient vehicleClient = new VehicleQueryClient();
     private final DirectCarServiceBridge directCar = new DirectCarServiceBridge();
-    private final Map<String, String> hmgCachedValues = new LinkedHashMap<String, String>();
     private final Map<String, String> directFastValues = new LinkedHashMap<String, String>();
     private final Map<String, String> directExtValues = new LinkedHashMap<String, String>();
     private final Map<String, String> mergedVehicleValues = new LinkedHashMap<String, String>();
     private volatile JSONObject cachedVehicleJson;
     private volatile long lastVehicleDemandMs = 0L;
     private volatile long lastVehiclePollMs = 0L;
-    private volatile String lastHmgErr = "";
 
     private final SwitcherStateStore store;
     private final PreferredHomeHelper pmHelper = new PreferredHomeHelper();
@@ -134,14 +132,50 @@ public final class HomeSwitcher {
     private boolean needsInitialChooserReset = false;
 
     public static void main(String[] args) {
-        String dataPath = System.getenv("HMGAPI_DATA");
+        String dataPath = System.getenv("GEN5W_DATA_DIR");
         if (dataPath == null || dataPath.trim().isEmpty()) {
-            dataPath = "/data/gen5w_launcher";
+            dataPath = System.getenv("HMGAPI_DATA");
         }
-        String modDirPath = System.getenv("HMGAPI_MOD_DIR");
-        File modDir = modDirPath == null ? null : new File(modDirPath);
+        if (dataPath == null || dataPath.trim().isEmpty()) {
+            dataPath = "/data/gen5w_launcher/run/home-switcher";
+        }
+        String appDirPath = System.getenv("GEN5W_APP_DIR");
+        if (appDirPath == null || appDirPath.trim().isEmpty()) {
+            appDirPath = System.getenv("HMGAPI_MOD_DIR");
+        }
+        if (appDirPath == null || appDirPath.trim().isEmpty()) {
+            appDirPath = "/data/nemesis/apps/gen5w.launcher";
+        }
+
+        if (args != null && args.length > 0 && "--restore-stock".equals(args[0])) {
+            restoreStockForUninstall(new File(dataPath));
+            return;
+        }
+
+        File modDir = new File(appDirPath);
         HomeSwitcher svc = new HomeSwitcher(new File(dataPath), modDir);
         svc.run();
+    }
+
+    private static void restoreStockForUninstall(File dataDir) {
+        try {
+            PreferredHomeHelper helper = new PreferredHomeHelper();
+            if (PreferredHomeHelper.CUSTOM_HOME.equals(helper.resolveCurrentHome())) {
+                helper.setPreferredHome(PreferredHomeHelper.STOCK_HOME);
+                helper.bringHomeToFront(PreferredHomeHelper.STOCK_HOME);
+            }
+            SwitcherStateStore store = new SwitcherStateStore(dataDir);
+            SwitcherStateStore.State s = store.load();
+            s.homeEnabled = false;
+            s.userChoseStock = false;
+            s.strikes = 0;
+            s.trippedReason = "";
+            s.lastEvent = "uninstalled_restored_stock";
+            store.save(s);
+            System.out.println("[HomeSwitcher] --restore-stock completed");
+        } catch (Throwable t) {
+            System.err.println("[HomeSwitcher] --restore-stock error: " + t);
+        }
     }
 
     private HomeSwitcher(File dataDir, File modDir) {
@@ -193,9 +227,9 @@ public final class HomeSwitcher {
         if (isColdBoot) {
             synchronized (this) {
                 boolean customPreferred = isCustomHomePreferred();
-                if (!isAutoActivateAllowedByModSetting()) {
+                if (!isAutoActivateAllowedBySetting()) {
                     if (customPreferred) {
-                        System.out.println("[HomeSwitcher] auto_activate_on_boot=false in HMG-API settings; restoring STOCK_HOME");
+                        System.out.println("[HomeSwitcher] autoActivateOnBoot=false; restoring STOCK_HOME");
                         pmHelper.setPreferredHome(PreferredHomeHelper.STOCK_HOME);
                         pmHelper.bringHomeToFront(PreferredHomeHelper.STOCK_HOME);
                     }
@@ -216,6 +250,7 @@ public final class HomeSwitcher {
 
         registerShutdownHook();
         startIpcServer();
+        restoreUpgradeBackupIfNeeded();
         syncModApkIfNeededAsync();
         startVehiclePoller();
 
@@ -242,6 +277,7 @@ public final class HomeSwitcher {
             public void run() {
                 running = false;
                 closeSocketQuietly();
+                directCar.stopHeldConditioningOnShutdown();
                 boolean disabled = isModDisabled();
                 synchronized (HomeSwitcher.this) {
                     if (disabled) {
@@ -368,7 +404,7 @@ public final class HomeSwitcher {
                 && state.strikes < 2
                 && (now - lastPreferredReassertMs) >= 6_000L
                 && !PreferredHomeHelper.CUSTOM_HOME.equals(currentHome)
-                && isAutoActivateAllowedByModSetting()) {
+                && isAutoActivateAllowedBySetting()) {
             lastPreferredReassertMs = now;
             if (pmHelper.setPreferredHome(PreferredHomeHelper.CUSTOM_HOME)) {
                 procWatch.resetWatch();
@@ -404,8 +440,8 @@ public final class HomeSwitcher {
         if (!state.homeEnabled || state.userChoseStock) {
             return;
         }
-        if (!isAutoActivateAllowedByModSetting()) {
-            System.out.println("[HomeSwitcher] auto_activate_on_boot=false in HMG-API settings; staying on stock HOME");
+        if (!isAutoActivateAllowedBySetting()) {
+            System.out.println("[HomeSwitcher] autoActivateOnBoot=false; staying on stock HOME");
             return;
         }
         if (!state.trippedReason.isEmpty()) {
@@ -560,6 +596,12 @@ public final class HomeSwitcher {
         } else if ("LAUNCH_STOCK".equals(cmd)) {
             boolean ok = pmHelper.bringHomeToFront(PreferredHomeHelper.STOCK_HOME);
             return buildStatusJson(now, ok, ok ? "Launched stock Launcher3" : "Failed to launch Launcher3");
+        } else if (cmd.startsWith("SET_AUTO_BOOT:")) {
+            boolean enable = "true".equalsIgnoreCase(cmd.substring("SET_AUTO_BOOT:".length()).trim());
+            state.autoActivateOnBoot = enable;
+            state.lastEvent = enable ? "auto_boot_enabled" : "auto_boot_disabled";
+            store.save(state);
+            return buildStatusJson(now, true, enable ? "Auto-activate on boot ENABLED" : "Auto-activate on boot DISABLED");
         } else {
             // STATUS or unknown defaults to non-mutating status read
             return buildStatusJson(now, true, "ok");
@@ -574,6 +616,7 @@ public final class HomeSwitcher {
         j.put("activeHome", active == null ? "none" : active.flattenToShortString());
         j.put("isCustomHome", PreferredHomeHelper.CUSTOM_HOME.equals(active));
         j.put("homeEnabled", state.homeEnabled);
+        j.put("autoActivateOnBoot", state.autoActivateOnBoot);
         j.put("strikes", state.strikes);
         j.put("trippedReason", state.trippedReason);
         j.put("lastEvent", state.lastEvent);
@@ -688,7 +731,7 @@ public final class HomeSwitcher {
     }
 
     private JSONObject handleSetVehicleKeysCommand(String raw) throws Exception {
-        Set<String> hmgFiltered = new LinkedHashSet<String>();
+        Set<String> validKeys = new LinkedHashSet<String>();
         int validInputCount = 0;
         if (raw != null && !raw.trim().isEmpty()) {
             String[] parts = raw.split(",");
@@ -698,18 +741,17 @@ public final class HomeSwitcher {
                     continue;
                 }
                 validInputCount++;
-                if (VehicleQueryClient.isHmgApiDeclaredKey(k) && hmgFiltered.size() < 64) {
-                    hmgFiltered.add(k);
+                if (validKeys.size() < 96) {
+                    validKeys.add(k);
                 }
             }
         }
         boolean changed;
         synchronized (vehiclePollLock) {
-            changed = !extraVehicleKeys.equals(hmgFiltered);
+            changed = !extraVehicleKeys.equals(validKeys);
             if (changed) {
                 extraVehicleKeys.clear();
-                extraVehicleKeys.addAll(hmgFiltered);
-                vehicleClient.clearQuarantine();
+                extraVehicleKeys.addAll(validKeys);
                 if (lastVehicleDemandMs > 0L) {
                     vehiclePollLock.notifyAll();
                 }
@@ -719,7 +761,7 @@ public final class HomeSwitcher {
         j.put("ok", true);
         j.put("changed", changed);
         j.put("count", validInputCount);
-        j.put("hmgCount", hmgFiltered.size());
+        j.put("hmgCount", validKeys.size());
         return j;
     }
 
@@ -746,25 +788,12 @@ public final class HomeSwitcher {
 
     private void publishMergedVehicleLocked() throws Exception {
         mergedVehicleValues.clear();
-        for (Map.Entry<String, String> e : hmgCachedValues.entrySet()) {
-            String v = e.getValue();
-            if (v != null && !v.isEmpty() && !"-".equals(v)) {
-                mergedVehicleValues.put(e.getKey(), v);
-            }
-        }
         for (Map.Entry<String, String> e : directExtValues.entrySet()) {
             String k = e.getKey();
             String v = e.getValue();
-            if (v == null || v.isEmpty() || "-".equals(v)) {
-                continue;
+            if (v != null && !v.isEmpty() && !"-".equals(v)) {
+                mergedVehicleValues.put(k, v);
             }
-            if ("hv.soc".equals(k) || "odometer".equals(k)) {
-                String existing = mergedVehicleValues.get(k);
-                if (existing != null && !existing.isEmpty() && !"-".equals(existing)) {
-                    continue;
-                }
-            }
-            mergedVehicleValues.put(k, v);
         }
         for (Map.Entry<String, String> e : directFastValues.entrySet()) {
             String v = e.getValue();
@@ -782,7 +811,7 @@ public final class HomeSwitcher {
         JSONObject snap = new JSONObject();
         snap.put("ok", valid);
         snap.put("code", valid ? 0 : -1);
-        snap.put("error", valid ? "" : (lastHmgErr == null || lastHmgErr.isEmpty() ? "no readings yet" : "hmgapid " + lastHmgErr));
+        snap.put("error", valid ? "" : "no readings yet");
         snap.put("values", vals);
         snap.put("updatedMs", System.currentTimeMillis());
         cachedVehicleJson = snap;
@@ -791,17 +820,35 @@ public final class HomeSwitcher {
     private JSONObject handleListHmgApiLauncherEntries() throws Exception {
         JSONObject resp = new JSONObject();
         JSONArray out = new JSONArray();
-        File modsRoot = (modDir != null && modDir.getParentFile() != null)
-                ? modDir.getParentFile()
-                : new File("/data/hmgapi/mods");
+        Set<String> seenComponents = new HashSet<String>();
+
+        // 1. Native NEMESIS packages with [app.*] component declarations
+        File nemesisApps = new File("/data/nemesis/apps");
+        File[] nemDirs = nemesisApps.listFiles();
+        if (nemDirs != null) {
+            Arrays.sort(nemDirs);
+            for (File dir : nemDirs) {
+                if (!dir.isDirectory() || new File(dir, ".disabled").exists()) {
+                    continue;
+                }
+                File meta = new File(dir, "NEMESIS.data");
+                if (!meta.isFile() || meta.length() > 65536L) {
+                    continue;
+                }
+                try {
+                    parseNemesisAppEntries(dir, meta, out, seenComponents);
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+
+        // 2. Opportunistic legacy HMG-API mods if installed alongside standalone launcher
+        File modsRoot = new File("/data/hmgapi/mods");
         File[] children = modsRoot.listFiles();
         if (children != null) {
             Arrays.sort(children);
             for (File dir : children) {
-                if (!dir.isDirectory()) {
-                    continue;
-                }
-                if (new File(dir, ".disabled").exists()) {
+                if (!dir.isDirectory() || new File(dir, ".disabled").exists()) {
                     continue;
                 }
                 File manifest = new File(dir, "mod.json");
@@ -813,6 +860,7 @@ public final class HomeSwitcher {
                     if (raw == null || raw.isEmpty()) continue;
                     JSONObject modJson = new JSONObject(raw);
                     String modId = modJson.optString("id", dir.getName());
+                    if ("gen5w-launcher".equals(modId)) continue;
                     JSONObject provides = modJson.optJSONObject("provides");
                     JSONArray entries = provides == null ? null : provides.optJSONArray("launcher");
                     if (entries == null) continue;
@@ -822,8 +870,9 @@ public final class HomeSwitcher {
                         if (e == null) continue;
                         String pkg = e.optString("package", "").trim();
                         String cls = e.optString("class", "").trim();
-                        if (pkg.isEmpty() || cls.isEmpty()) continue;
+                        if (pkg.isEmpty() || cls.isEmpty() || CUSTOM_PKG.equals(pkg)) continue;
                         if (cls.startsWith(".")) cls = pkg + cls;
+                        if (!seenComponents.add(pkg + "/" + cls)) continue;
                         String title = e.optString("title", "").trim();
                         String iconRel = e.optString("icon", "").trim();
                         String iconB64 = "";
@@ -854,6 +903,79 @@ public final class HomeSwitcher {
         resp.put("ok", true);
         resp.put("entries", out);
         return resp;
+    }
+
+    private static void parseNemesisAppEntries(
+            File dir, File meta, JSONArray out, Set<String> seenComponents) throws Exception {
+        String pkgId = dir.getName();
+        String pkgName = dir.getName();
+        String section = "";
+        String curAppPkg = "";
+        String curComponent = "";
+        List<String[]> foundApps = new ArrayList<String[]>();
+
+        BufferedReader br = new BufferedReader(new InputStreamReader(new FileInputStream(meta), "UTF-8"));
+        try {
+            String rawLine;
+            while ((rawLine = br.readLine()) != null) {
+                String line = rawLine.trim();
+                if (line.isEmpty() || line.startsWith("#") || line.startsWith(";")) continue;
+                if (line.startsWith("[") && line.endsWith("]")) {
+                    if (section.startsWith("app.") && !curComponent.isEmpty()) {
+                        foundApps.add(new String[] { curAppPkg, curComponent });
+                    }
+                    section = line.substring(1, line.length() - 1).trim();
+                    curAppPkg = "";
+                    curComponent = "";
+                    continue;
+                }
+                int eq = line.indexOf('=');
+                if (eq <= 0) continue;
+                String k = line.substring(0, eq).trim();
+                String v = stripQuotes(line.substring(eq + 1).trim());
+                if ("nemesis".equals(section)) {
+                    if ("id".equals(k) && !v.isEmpty()) pkgId = v;
+                    else if ("name".equals(k) && !v.isEmpty()) pkgName = v;
+                } else if (section.startsWith("app.")) {
+                    if ("package".equals(k)) curAppPkg = v;
+                    else if ("component".equals(k)) curComponent = v;
+                }
+            }
+            if (section.startsWith("app.") && !curComponent.isEmpty()) {
+                foundApps.add(new String[] { curAppPkg, curComponent });
+            }
+        } finally {
+            br.close();
+        }
+
+        if ("gen5w.launcher".equals(pkgId) || "hmgapi.gen5w-launcher".equals(pkgId)) {
+            return;
+        }
+        for (String[] app : foundApps) {
+            String comp = app[1];
+            int slash = comp.indexOf('/');
+            if (slash <= 0 || slash >= comp.length() - 1) continue;
+            String p = comp.substring(0, slash).trim();
+            String c = comp.substring(slash + 1).trim();
+            if (p.isEmpty() || c.isEmpty() || CUSTOM_PKG.equals(p)) continue;
+            if (c.startsWith(".")) c = p + c;
+            if (!seenComponents.add(p + "/" + c)) continue;
+            JSONObject item = new JSONObject();
+            item.put("mod", pkgId);
+            item.put("package", p);
+            item.put("class", c);
+            item.put("title", pkgName);
+            item.put("iconBase64", "");
+            out.put(item);
+        }
+    }
+
+    private static String stripQuotes(String v) {
+        if (v.length() >= 2
+                && ((v.startsWith("\"") && v.endsWith("\"")) || (v.startsWith("'") && v.endsWith("'")))) {
+            return v.substring(1, v.length() - 1);
+        }
+        return v;
     }
 
     private static String readTextFileLimited(File file, int maxBytes) throws IOException {
@@ -998,13 +1120,14 @@ public final class HomeSwitcher {
                         boolean wasCustom = isCustomHomePreferred();
                         System.out.println("[HomeSwitcher] syncing Gen5WLauncher APK (" + installed + " -> " + EXPECTED_APP_VERSION_CODE + ")");
                         if (pmHelper.installApkReplace(apk)) {
+                            restoreUpgradeBackupIfNeeded();
                             boolean shouldRestoreCustom;
                             boolean shouldArmChooser;
                             synchronized (HomeSwitcher.this) {
                                 procWatch.resetWatch();
                                 shouldRestoreCustom = wasCustom
                                         || (state.homeEnabled && !state.userChoseStock && state.trippedReason.isEmpty()
-                                        && isAutoActivateAllowedByModSetting());
+                                        && isAutoActivateAllowedBySetting());
                                 shouldArmChooser = !shouldRestoreCustom
                                         && !state.userChoseStock
                                         && state.trippedReason.isEmpty();
@@ -1039,72 +1162,6 @@ public final class HomeSwitcher {
     }
 
     private void startVehiclePoller() {
-        // Dedicated slower HMG-API helper thread so callback-heavy or blocking readings (like battery temp)
-        // never stall the 100ms direct Binder fast-sensor loop.
-        Thread hmgThread = new Thread(new Runnable() {
-            @Override
-            public void run() {
-                while (running) {
-                    long now = SystemClock.elapsedRealtime();
-                    if (lastVehicleDemandMs <= 0L || (now - lastVehicleDemandMs) > VEHICLE_DEMAND_WINDOW_MS) {
-                        synchronized (vehiclePollLock) {
-                            if (!running) break;
-                            now = SystemClock.elapsedRealtime();
-                            if (lastVehicleDemandMs <= 0L || (now - lastVehicleDemandMs) > VEHICLE_DEMAND_WINDOW_MS) {
-                                try {
-                                    vehiclePollLock.wait(IDLE_VEHICLE_POLL_MS);
-                                } catch (InterruptedException ignored) {
-                                    break;
-                                }
-                                continue;
-                            }
-                        }
-                    }
-                    long startMs = SystemClock.elapsedRealtime();
-                    try {
-                        List<String> keys = new ArrayList<String>();
-                        for (String ck : VehicleQueryClient.CORE_KEYS) {
-                            if (VehicleQueryClient.isHmgApiDeclaredKey(ck) && !keys.contains(ck)) {
-                                keys.add(ck);
-                            }
-                        }
-                        for (String extra : new String[] {
-                                "hv.ready", "charging", "hv.soc", "outside_temp_f", "outside_temp",
-                                "wheel_heat", "defogger", "hv.conditioning_active", "driving.restricted", "odometer"
-                        }) {
-                            if (!keys.contains(extra)) keys.add(extra);
-                        }
-                        synchronized (vehiclePollLock) {
-                            for (String k : extraVehicleKeys) {
-                                if (VehicleQueryClient.isHmgApiDeclaredKey(k) && !keys.contains(k)) {
-                                    keys.add(k);
-                                }
-                            }
-                        }
-                        VehicleQueryClient.BatchResult res = vehicleClient.query(keys);
-                        lastHmgErr = res.errorNote == null ? "" : res.errorNote;
-                        synchronized (liveVehicleLock) {
-                            if (res.anySuccess && !res.values.isEmpty()) {
-                                hmgCachedValues.putAll(res.values);
-                            }
-                            publishMergedVehicleLocked();
-                        }
-                    } catch (Throwable ex) {
-                        lastHmgErr = String.valueOf(ex.getMessage());
-                    }
-                    long elapsed = Math.max(0L, SystemClock.elapsedRealtime() - startMs);
-                    long sleep = Math.max(250L, HMG_VEHICLE_POLL_MS - elapsed);
-                    try {
-                        Thread.sleep(sleep);
-                    } catch (InterruptedException ignored) {
-                        break;
-                    }
-                }
-            }
-        }, "home-switcher-hmgapi");
-        hmgThread.setDaemon(true);
-        hmgThread.start();
-
         Thread t = new Thread(new Runnable() {
             @Override
             public void run() {
@@ -1134,8 +1191,12 @@ public final class HomeSwitcher {
                         Map<String, String> extFresh = null;
                         if ((loopStartMs - lastExtMs) >= EXTENDED_VEHICLE_POLL_MS) {
                             lastExtMs = loopStartMs;
+                            Set<String> demandSnap;
+                            synchronized (vehiclePollLock) {
+                                demandSnap = new LinkedHashSet<String>(extraVehicleKeys);
+                            }
                             extFresh = new LinkedHashMap<String, String>();
-                            directCar.pollExtended(extFresh);
+                            directCar.pollExtended(extFresh, demandSnap);
                         }
                         synchronized (liveVehicleLock) {
                             if (!fastFresh.isEmpty()) {
@@ -1185,13 +1246,8 @@ public final class HomeSwitcher {
         return "1".equals(procWatch.getProp("sys.boot_completed", "0"));
     }
 
-    private boolean isAutoActivateAllowedByModSetting() {
-        try {
-            JSONObject s = HmgApi.connect().timeout(600).settings();
-            return s == null || s.optBoolean("auto_activate_on_boot", true);
-        } catch (Throwable ignored) {
-            return true;
-        }
+    private boolean isAutoActivateAllowedBySetting() {
+        return state.autoActivateOnBoot;
     }
 
     private void startIpcServer() {
@@ -1322,21 +1378,168 @@ public final class HomeSwitcher {
         return new String(bos.toByteArray(), "UTF-8");
     }
 
+    private final Object upgradeBackupLock = new Object();
+
+    private void restoreUpgradeBackupIfNeeded() {
+        synchronized (upgradeBackupLock) {
+            File bkDir = new File("/data/gen5w_launcher/upgrade_backup");
+            if (!bkDir.isDirectory()) {
+                return;
+            }
+            int appUid = pmHelper.getPackageUid(CUSTOM_PKG);
+            File appDataDir = new File("/data/data/" + CUSTOM_PKG);
+            if (appUid <= 0 || !appDataDir.isDirectory()) {
+                return;
+            }
+            try {
+                File bkFiles = new File(bkDir, "files");
+                File dstFiles = new File(appDataDir, "files");
+                if (bkFiles.isDirectory()) {
+                    copyDirPreservingExisting(bkFiles, dstFiles, appUid);
+                    runRestorecon(dstFiles);
+                }
+                File bkPrefs = new File(bkDir, "shared_prefs");
+                File dstPrefs = new File(appDataDir, "shared_prefs");
+                if (bkPrefs.isDirectory()) {
+                    copyDirPreservingExisting(bkPrefs, dstPrefs, appUid);
+                    runRestorecon(dstPrefs);
+                }
+                deleteRecursive(bkDir);
+                System.out.println("[HomeSwitcher] restored upgrade_backup for uid=" + appUid);
+            } catch (Throwable t) {
+                System.err.println("[HomeSwitcher] restoreUpgradeBackupIfNeeded error: " + t);
+            }
+        }
+    }
+
+    private void copyDirPreservingExisting(File src, File dst, int uid) throws IOException {
+        if (!dst.exists() && !dst.mkdirs()) {
+            if (!dst.isDirectory()) {
+                throw new IOException("Failed to create dir " + dst.getAbsolutePath());
+            }
+        }
+        applyOwnerAndMode(dst, uid, 0771);
+        File[] children = src.listFiles();
+        if (children == null) {
+            return;
+        }
+        byte[] buf = new byte[16384];
+        for (File child : children) {
+            File target = new File(dst, child.getName());
+            if (child.isDirectory()) {
+                copyDirPreservingExisting(child, target, uid);
+            } else if (child.isFile()) {
+                if (!target.exists()) {
+                    FileInputStream in = null;
+                    FileOutputStream out = null;
+                    try {
+                        in = new FileInputStream(child);
+                        out = new FileOutputStream(target);
+                        int n;
+                        while ((n = in.read(buf)) >= 0) {
+                            if (n > 0) {
+                                out.write(buf, 0, n);
+                            }
+                        }
+                        out.getFD().sync();
+                    } finally {
+                        closeQuietly(out);
+                        closeQuietly(in);
+                    }
+                    applyOwnerAndMode(target, uid, 0660);
+                }
+            }
+        }
+    }
+
+    private void applyOwnerAndMode(File path, int uid, int mode) {
+        String abs = path.getAbsolutePath();
+        boolean chowned = false;
+        boolean chmodded = false;
+        if (LIBCORE_OS != null && LIBCORE_OS_CHOWN != null) {
+            try {
+                LIBCORE_OS_CHOWN.invoke(LIBCORE_OS, abs, uid, uid);
+                chowned = true;
+            } catch (Throwable ignored) {
+            }
+        }
+        if (!chowned) {
+            pmHelper.runRootCommand(new String[] { "/system/bin/chown", uid + "." + uid, abs });
+        }
+        if (LIBCORE_OS != null && LIBCORE_OS_CHMOD != null) {
+            try {
+                LIBCORE_OS_CHMOD.invoke(LIBCORE_OS, abs, mode);
+                chmodded = true;
+            } catch (Throwable ignored) {
+            }
+        }
+        if (!chmodded) {
+            pmHelper.runRootCommand(new String[] { "/system/bin/chmod", Integer.toOctalString(mode), abs });
+        }
+    }
+
+    private void runRestorecon(File dir) {
+        if (dir != null && dir.exists()) {
+            pmHelper.runRootCommand(new String[] { "/system/bin/restorecon", "-R", dir.getAbsolutePath() });
+        }
+    }
+
+    private static void closeQuietly(Closeable c) {
+        if (c != null) {
+            try {
+                c.close();
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    private static void deleteRecursive(File f) {
+        if (f == null || !f.exists()) {
+            return;
+        }
+        if (f.isDirectory()) {
+            File[] children = f.listFiles();
+            if (children != null) {
+                for (File c : children) {
+                    deleteRecursive(c);
+                }
+            }
+        }
+        f.delete();
+    }
+
     private static final Object LIBCORE_OS;
     private static final Method LIBCORE_OS_CLOSE;
+    private static final Method LIBCORE_OS_CHOWN;
+    private static final Method LIBCORE_OS_CHMOD;
     static {
         Object osObj = null;
         Method closeMethod = null;
+        Method chownMethod = null;
+        Method chmodMethod = null;
         try {
             Class<?> libcoreCls = Class.forName("libcore.io.Libcore");
             osObj = libcoreCls.getField("os").get(null);
             if (osObj != null) {
-                closeMethod = osObj.getClass().getMethod("close", FileDescriptor.class);
+                try {
+                    closeMethod = osObj.getClass().getMethod("close", FileDescriptor.class);
+                } catch (Throwable ignored) {
+                }
+                try {
+                    chownMethod = osObj.getClass().getMethod("chown", String.class, int.class, int.class);
+                } catch (Throwable ignored) {
+                }
+                try {
+                    chmodMethod = osObj.getClass().getMethod("chmod", String.class, int.class);
+                } catch (Throwable ignored) {
+                }
             }
         } catch (Throwable ignored) {
         }
         LIBCORE_OS = osObj;
         LIBCORE_OS_CLOSE = closeMethod;
+        LIBCORE_OS_CHOWN = chownMethod;
+        LIBCORE_OS_CHMOD = chmodMethod;
     }
 
     /**

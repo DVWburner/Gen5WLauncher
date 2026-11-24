@@ -8,7 +8,7 @@ import java.util.Properties;
 
 /**
  * Atomic file-backed persistence for the 5-layer failsafe state.
- * Stores state under HMGAPI_DATA (/data/hmgapi/run/gen5w-launcher/home-switcher)
+ * Stores state under /data/gen5w_launcher/run/home-switcher (GEN5W_DATA_DIR)
  * with fsync + rename so power loss or pinhole resets never corrupt boot strikes.
  */
 final class SwitcherStateStore {
@@ -16,6 +16,7 @@ final class SwitcherStateStore {
         int schemaVersion = 1;
         boolean homeEnabled;
         boolean userChoseStock;
+        boolean autoActivateOnBoot = true;
         int strikes;
         String trippedReason = "";
         String lastEvent = "initialized";
@@ -50,6 +51,7 @@ final class SwitcherStateStore {
             }
             s.homeEnabled = "true".equalsIgnoreCase(p.getProperty("homeEnabled", "false"));
             s.userChoseStock = "true".equalsIgnoreCase(p.getProperty("userChoseStock", "false"));
+            s.autoActivateOnBoot = !"false".equalsIgnoreCase(p.getProperty("autoActivateOnBoot", "true"));
             try {
                 s.strikes = Math.max(0, Integer.parseInt(p.getProperty("strikes", "0").trim()));
             } catch (NumberFormatException ignored) {
@@ -75,6 +77,7 @@ final class SwitcherStateStore {
         p.setProperty("schemaVersion", Integer.toString(Math.max(3, s.schemaVersion)));
         p.setProperty("homeEnabled", Boolean.toString(s.homeEnabled));
         p.setProperty("userChoseStock", Boolean.toString(s.userChoseStock));
+        p.setProperty("autoActivateOnBoot", Boolean.toString(s.autoActivateOnBoot));
         p.setProperty("strikes", Integer.toString(Math.max(0, s.strikes)));
         p.setProperty("trippedReason", nonNull(s.trippedReason));
         p.setProperty("lastEvent", nonNull(s.lastEvent));

@@ -1,0 +1,27 @@
+[nemesis]
+version=1.1
+id=gen5w.launcher
+name=Gen5W Theme Launcher
+type=application,service
+package-version=@PACKAGE_VERSION@
+short-desc="Themed Homescreen Replacement"
+detailed-desc="Replaces the main homescreen. Download and make custom themes from https://market.ioniqthemes.com"
+os=any
+models=any
+preinstall=scripts/preinstall.sh
+postinstall=scripts/postinstall.sh
+preuninstall=scripts/preuninstall.sh
+
+[app.0]
+kind=apk
+path=app/Gen5WLauncher.apk
+package=com.gen5w.launcher
+component=com.gen5w.launcher/com.gen5w.launcher.ThemeManagerActivity
+uid=root
+
+[service.0]
+name=home-switcher
+kind=sh
+path=svc/home-switcher.sh
+uid=root
+mode=restart

@@ -1,5 +1,43 @@
 # Changelog
 
+## v0.5.0 — 2026-11-23
+
+### Standalone Native NEMESIS Architecture (Zero HMG-API Dependency)
+- **Removed `HMG-API` Dependency 100% (`nemesis/NEMESIS.data.in`, `scripts/build.ps1`, `HomeSwitcher`, `DirectCarServiceBridge`):**
+  - Packaged `Gen5WLauncher` as a standalone native **NEMESIS `1.1`** `type=application,service` package (`id=gen5w.launcher`, no `depends=hmgapi`), allowing users to run Gen5W Launcher alongside any other head unit mods without HMG-API conflicts.
+  - Replaced all `HmgApi` client/IPC calls and build-time references with direct Gen5W OEM Binder services (`IHEVService`, `ITM_HSCANService`, `IBCMService`, `IDATCService`, `IClusterService`, `IRegulationManager`, `IModeService`, `ISoundService`), pure Java JSON stubs (`SimpleJsonParser`), and direct USB safety mount scanning (`UsbSafetyMonitor`).
+  - Added automatic seamless migration from `v0.4.x` (`hmgapi.gen5w-launcher`) in `nemesis/scripts/preinstall.sh` + `HomeSwitcher.restoreUpgradeBackupIfNeeded()`: backs up existing downloaded themes and preferences before cleanly removing the legacy HMG-API mod, restores ownership/SELinux context after APK installation, and preserves active Default Home & Failsafe state across upgrades.
+  - Added an in-app **Auto-Activate on Cold Boot** toggle (`SET_AUTO_BOOT`) inside Default Home / Failsafe and native `/data/nemesis/apps/*/NEMESIS.data` `[app.*]` discovery in the All Apps drawer (while opportunistically listing legacy HMG-API apps if present).
+
+### Vehicle Telemetry & Car Control Fixes
+- **Fixed EV Energy Flow Sensors (`DirectCarServiceBridge`):**
+  - Implemented exact OEM `HKMC_TAppEV3` (`IHEVService` Gen2 CAN-FD & Gen1 EV) energy formulas for `energy.drivetrain_kw` (signed kW), `energy.climate_kw`, `energy.electronics_w`, and `energy.care_kw`.
+- **Live Tire Pressure PSI + Parked Status Fallback (`DirectCarServiceBridge`, `LayoutEngine`):**
+  - Implemented live per-wheel PSI decoding directly from CAN-FD `0x03A1` (`TPMS_01_200ms_1`) via `ITM_HSCANService.getOneTimeServiceData()` (`FR`/`FL`/`RR`/`RL`), supporting `"psi"`, `"bar"`, and `"kPa"` `unit` formatting.
+  - While parked before TPMS RF wheel sensors wake up, `tyre.*_psi` automatically falls back to tire status (`"OK"` / `"LOW"`) instead of staying blank or failing.
+- **Direct Binder EV & Cabin Controls (`DirectCarServiceBridge`):**
+  - Migrated `hv.soc`, `odometer`, `hv.conditioning`, `hv.conditioning_failure`, `hv.v2l_active`, `hv.plug_state`, `hv.health`, `hv.battery_temp_min` (`IClusterService` callback), `battery12v.*`, `driving.restricted`, `charge_door`, `wheel_heat_toggle`, and battery preconditioning keepalive state machine directly onto OEM Binder APIs.
+
+### Gen5W Studio — Referenced-Asset Packaging & Unused File Pruning (`v0.5.0`)
+- **Excluded Unreferenced Workspace Assets from `.zip` Bundles & USB Exports (`ThemePackageService`, `PackWorkspaceService`, `UploadThemeDialog`):**
+  - **Save Safe Theme `.zip` / Upload to Theme Store** (`BuildSingleThemeZip` & `AuditWorkspaceTheme`) and **Export to USB / Save Theme Copy** (`CopyReferencedThemeToDirectory`) now package **only** assets actively referenced by `layout.json` and the active `background.type`.
+  - Prunes inactive background asset fields and stale widget icon fields on export, and adds a **Clean Unused** button inside **Upload / Package Theme**.
+  - Updated bundled NEMESIS USB installer (`gen5w-launcher-nemesis.zip`) and `NemesisInstallerService` to `v0.5.0` standalone (`packages/gen5w.launcher.zip`), hardened bitmap decoding in `StudioCanvasControl`, and updated `--self-test` verification.
+
+---
+
+## v0.4.10 — 2026-11-20
+
+### Gen5W Studio — Referenced-Asset Packaging & Unused File Pruning
+- **Excluded Unreferenced Workspace Assets from `.zip` Bundles & USB Exports (`ThemePackageService`, `PackWorkspaceService`, `UploadThemeDialog`):**
+  - Previously, trying multiple static wallpapers (`media/*.jpg`), converting multiple animated video/GIF loops (`anim/backdrop_HHmmss/*`), testing custom fonts/images, or seeding the 28 starter icons (`icons/*.svg`) left all unused files in the workspace folder and packaged *every* file into the final `.zip` and USB folder.
+  - Added full layout-tree & active-backdrop asset dependency resolution (`ThemePackageService.CollectReferencedAssets` & `PruneInactiveFieldsForRelease`):
+    - **Save Safe Theme `.zip` / Upload to Theme Store** (`BuildSingleThemeZip` & `AuditWorkspaceTheme`) and **Export to USB / Save Theme Copy** (`CopyReferencedThemeToDirectory`) now package **only** the assets actively referenced by `layout.json` and the active `background.type` (automatically excluding old wallpapers, unused `anim/*` frame directories, unused fonts, and unused icons).
+    - Inactive background asset properties (e.g. a leftover `framesDir` after switching `background.type` to `bitmap` or `animated_aurora`) and stale icon fields on non-icon widgets are automatically pruned from the exported `layout.json`.
+    - Added a **Clean Unused** button and skipped-file summary inside the **Upload / Package Theme** audit panel so creators can also optionally delete unused custom assets from their local workspace folder on disk.
+
+---
+
 ## v0.4.9 — 2026-11-20
 
 ### Bug Fixes

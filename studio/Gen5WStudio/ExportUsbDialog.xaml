@@ -132,7 +132,7 @@
                     <CheckBox x:Name="IncludeNemesisInstallerCheck" Foreground="#FF7DD3FC" FontWeight="Bold" FontSize="12"
                               Content="3. INCLUDE GEN5W LAUNCHER NEMESIS INSTALLER ON USB ROOT"
                               Checked="OnExportModeChanged" Unchecked="OnExportModeChanged" />
-                    <TextBlock Text="Copies NEMESIS.data, packages/hmgapi.gen5w-launcher.zip, and README.txt onto the root of the USB drive to install or update Gen5W Launcher without the NEMESIS Store."
+                    <TextBlock Text="Copies NEMESIS.data, packages/gen5w.launcher.zip, and README.txt onto the root of the USB drive to install or update Gen5W Launcher standalone via NEMESIS (no HMG-API required)."
                                Foreground="#FF94A3B8" FontSize="11" TextWrapping="Wrap" Margin="0,5,0,8" />
                     <Grid>
                         <Grid.ColumnDefinitions>

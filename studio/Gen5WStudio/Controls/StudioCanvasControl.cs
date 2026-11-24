@@ -421,9 +421,9 @@ public sealed class StudioCanvasControl : Border
         if (bg.Type == "bitmap" && !string.IsNullOrWhiteSpace(bg.BitmapAsset))
         {
             string p = workspace.ResolveAssetFullPath(bg.BitmapAsset);
-            if (File.Exists(p))
+            if (File.Exists(p) && LoadFrozenBitmap(p) is BitmapImage bgBmp)
             {
-                backdropImage.Source = LoadFrozenBitmap(p);
+                backdropImage.Source = bgBmp;
                 backdropDimOverlay.Background = new SolidColorBrush(ParseColor(bg.DimColor, Color.FromArgb(72, 6, 11, 18)));
                 backdropDimOverlay.Visibility = Visibility.Visible;
             }
@@ -1179,9 +1179,9 @@ public sealed class StudioCanvasControl : Border
             string? imgPath = !string.IsNullOrWhiteSpace(w.Style.BgBitmapAsset)
                 ? workspace?.ResolveAssetFullPath(w.Style.BgBitmapAsset)
                 : FindFirstFrameInDir(workspace?.ResolveAssetFullPath(w.Style.BgAnimAsset));
-            if (!string.IsNullOrEmpty(imgPath) && File.Exists(imgPath))
+            if (!string.IsNullOrEmpty(imgPath) && File.Exists(imgPath) && LoadFrozenBitmap(imgPath) is BitmapImage tileBmp)
             {
-                tileGrid.Children.Add(new Image { Source = LoadFrozenBitmap(imgPath), Stretch = Stretch.UniformToFill });
+                tileGrid.Children.Add(new Image { Source = tileBmp, Stretch = Stretch.UniformToFill });
                 byte dimA = (byte)Math.Clamp(w.Style?.BgDimAlpha ?? 95, 0, 230);
                 tileGrid.Children.Add(new Border { Background = new SolidColorBrush(Color.FromArgb(dimA, 6, 11, 18)) });
             }
@@ -1556,6 +1556,10 @@ public sealed class StudioCanvasControl : Border
             case "seat_heat.rear_right": return sim.RearRightSeatHeat;
             case "seat_vent.driver": return sim.DriverSeatVent;
             case "seat_vent.passenger": return sim.PassengerSeatVent;
+            case "seat_state.driver": return sim.DriverSeatHeat > 0 ? (sim.DriverSeatHeat + 5) : (sim.DriverSeatVent > 0 ? (sim.DriverSeatVent + 2) : 2);
+            case "seat_state.passenger": return sim.PassengerSeatHeat > 0 ? (sim.PassengerSeatHeat + 5) : (sim.PassengerSeatVent > 0 ? (sim.PassengerSeatVent + 2) : 2);
+            case "seat_state.rear_left": return sim.RearLeftSeatHeat > 0 ? (sim.RearLeftSeatHeat + 5) : 2;
+            case "seat_state.rear_right": return sim.RearRightSeatHeat > 0 ? (sim.RearRightSeatHeat + 5) : 2;
             case "wheel_heat": return sim.WheelHeat ? 1 : 0;
             case "defogger": return sim.Defogger ? 1 : 0;
             case "charging": return sim.Charging ? 1 : 0;
@@ -1693,6 +1697,10 @@ public sealed class StudioCanvasControl : Border
             "seat_heat.rear_right" => string.IsNullOrEmpty(u) ? FormatLevel(sim.RearRightSeatHeat) : $"{sim.RearRightSeatHeat}{u}",
             "seat_vent.driver" => string.IsNullOrEmpty(u) ? FormatLevel(sim.DriverSeatVent) : $"{sim.DriverSeatVent}{u}",
             "seat_vent.passenger" => string.IsNullOrEmpty(u) ? FormatLevel(sim.PassengerSeatVent) : $"{sim.PassengerSeatVent}{u}",
+            "seat_state.driver" => $"{(sim.DriverSeatHeat > 0 ? sim.DriverSeatHeat + 5 : sim.DriverSeatVent > 0 ? sim.DriverSeatVent + 2 : 2)}{u}",
+            "seat_state.passenger" => $"{(sim.PassengerSeatHeat > 0 ? sim.PassengerSeatHeat + 5 : sim.PassengerSeatVent > 0 ? sim.PassengerSeatVent + 2 : 2)}{u}",
+            "seat_state.rear_left" => $"{(sim.RearLeftSeatHeat > 0 ? sim.RearLeftSeatHeat + 5 : 2)}{u}",
+            "seat_state.rear_right" => $"{(sim.RearRightSeatHeat > 0 ? sim.RearRightSeatHeat + 5 : 2)}{u}",
             _ => "OK"
         };
     }
@@ -2167,20 +2175,27 @@ public sealed class StudioCanvasControl : Border
         }
         foreach (string p in names)
         {
-            if (File.Exists(p)) list.Add(LoadFrozenBitmap(p));
+            if (File.Exists(p) && LoadFrozenBitmap(p) is BitmapImage frameBmp) list.Add(frameBmp);
         }
         return list;
     }
 
-    private static BitmapImage LoadFrozenBitmap(string path)
+    private static BitmapImage? LoadFrozenBitmap(string path)
     {
-        var bi = new BitmapImage();
-        bi.BeginInit();
-        bi.CacheOption = BitmapCacheOption.OnLoad;
-        bi.UriSource = new Uri(path);
-        bi.EndInit();
-        bi.Freeze();
-        return bi;
+        try
+        {
+            var bi = new BitmapImage();
+            bi.BeginInit();
+            bi.CacheOption = BitmapCacheOption.OnLoad;
+            bi.UriSource = new Uri(path);
+            bi.EndInit();
+            bi.Freeze();
+            return bi;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static int[] NormalizeInsets(int[]? p)

@@ -221,11 +221,25 @@ public partial class UploadThemeDialog : Window
             sb.AppendLine();
         }
 
-        sb.AppendLine($"VERIFIED ASSETS ({_lastAudit.IncludedFiles.Count} files, {_lastAudit.TotalBytes / 1024.0:0.#} KB):");
+        sb.AppendLine($"PACKAGED REFERENCED ASSETS ({_lastAudit.IncludedFiles.Count} files, {_lastAudit.TotalBytes / 1024.0:0.#} KB):");
         foreach (var f in _lastAudit.IncludedFiles.Take(40))
             sb.AppendLine($"  + {f.Path} ({f.Size / 1024.0:0.#} KB)");
         if (_lastAudit.IncludedFiles.Count > 40)
             sb.AppendLine($"  ... and {_lastAudit.IncludedFiles.Count - 40} more files.");
+
+        if (_lastAudit.ExcludedUnusedFiles.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"SKIPPED UNUSED WORKSPACE FILES ({_lastAudit.ExcludedUnusedFiles.Count} files, {_lastAudit.ExcludedUnusedBytes / 1024.0:0.#} KB — NOT packaged in .zip):");
+            foreach (var u in _lastAudit.ExcludedUnusedFiles.Take(20))
+                sb.AppendLine($"  - {u}");
+            if (_lastAudit.ExcludedUnusedFiles.Count > 20)
+                sb.AppendLine($"  ... and {_lastAudit.ExcludedUnusedFiles.Count - 20} more unused files.");
+        }
+
+        var builtInIcons = new HashSet<string>(PresetCatalog.BuiltInIcons, StringComparer.OrdinalIgnoreCase);
+        bool hasCleanableCustomUnused = _lastAudit.ExcludedUnusedFiles.Any(p => !builtInIcons.Contains(p));
+        CleanUnusedBtn.Visibility = hasCleanableCustomUnused ? Visibility.Visible : Visibility.Collapsed;
 
         AuditDetailsBox.Text = sb.ToString();
 
@@ -234,7 +248,10 @@ public partial class UploadThemeDialog : Window
             AuditBadgeBorder.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FF064E3B"));
             AuditBadgeBorder.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FF10B981"));
             AuditSummaryText.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FFD1FAE5"));
-            AuditSummaryText.Text = $"SAFE: Single theme verified ({_lastAudit.IncludedFiles.Count} assets + layout.json + thumbnail.png + manifest.json).";
+            string skippedTag = _lastAudit.ExcludedUnusedFiles.Count > 0
+                ? $" ({_lastAudit.ExcludedUnusedFiles.Count} unused workspace file(s) automatically excluded)"
+                : "";
+            AuditSummaryText.Text = $"SAFE: Single theme verified ({_lastAudit.IncludedFiles.Count} referenced assets + layout.json + thumbnail.png + manifest.json){skippedTag}.";
             SaveZipBtn.IsEnabled = true;
             UploadStoreBtn.IsEnabled = true;
         }
@@ -247,6 +264,26 @@ public partial class UploadThemeDialog : Window
             SaveZipBtn.IsEnabled = false;
             UploadStoreBtn.IsEnabled = false;
         }
+    }
+
+    private void OnCleanUnusedClick(object sender, RoutedEventArgs e)
+    {
+        if (MessageBox.Show(
+                this,
+                "Delete unused custom wallpapers, converted video frame folders, fonts, and custom icons from your local workspace folder?\n\n" +
+                "(Note: Unused files are already excluded automatically when saving a .zip or exporting to USB.)",
+                "Clean Unused Workspace Files",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        var (deleted, freedBytes) = PackWorkspaceService.CleanUnusedWorkspaceAssets(_pack, _workspaceDir);
+        RunAudit();
+        StatusText.Text = deleted > 0
+            ? $"Cleaned {deleted} unused workspace file(s) ({freedBytes / 1024.0:0.#} KB freed)."
+            : "No unused custom workspace files to delete.";
     }
 
     private void OnBumpRevisionClick(object sender, RoutedEventArgs e)

@@ -44,6 +44,7 @@ public final class SwitcherClient {
         public String activeHome = "unknown";
         public boolean isCustomHome = false;
         public boolean homeEnabled = false;
+        public boolean autoActivateOnBoot = true;
         public int strikes = 0;
         public String trippedReason = "";
         public String lastEvent = "";
@@ -360,6 +361,7 @@ public final class SwitcherClient {
             st.activeHome = j.optString("activeHome", "unknown");
             st.isCustomHome = j.optBoolean("isCustomHome", false);
             st.homeEnabled = j.optBoolean("homeEnabled", false);
+            st.autoActivateOnBoot = j.optBoolean("autoActivateOnBoot", true);
             st.strikes = j.optInt("strikes", 0);
             st.trippedReason = j.optString("trippedReason", "");
             st.lastEvent = j.optString("lastEvent", "");

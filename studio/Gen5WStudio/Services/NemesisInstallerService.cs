@@ -30,12 +30,12 @@ public sealed class InstallerBundleInfo
 
 /// <summary>
 /// Locates, validates, and safely extracts the Gen5W Launcher NEMESIS USB installer
-/// (NEMESIS.data + packages/hmgapi.gen5w-launcher.zip + README.txt) onto a USB root.
+/// (NEMESIS.data + packages/gen5w.launcher.zip + README.txt) onto a USB root.
 /// </summary>
 public static class NemesisInstallerService
 {
     private const string EmbeddedResourceSuffix = "gen5w-launcher-nemesis.zip";
-    private const string ExpectedPackageZipEntry = "packages/hmgapi.gen5w-launcher.zip";
+    private const string ExpectedPackageZipEntry = "packages/gen5w.launcher.zip";
 
     public static InstallerBundleInfo? ResolveDefaultInstaller()
     {
@@ -212,7 +212,8 @@ public static class NemesisInstallerService
         try
         {
             string text = File.ReadAllText(dataFile, Encoding.UTF8);
-            if (text.Contains("hmgapi.gen5w-launcher", StringComparison.OrdinalIgnoreCase))
+            if (text.Contains("gen5w.launcher", StringComparison.OrdinalIgnoreCase)
+                || text.Contains("hmgapi.gen5w-launcher", StringComparison.OrdinalIgnoreCase))
                 return false;
             summary = text.Trim();
             return true;

@@ -192,7 +192,7 @@
                 "kind": "ev_hero",
                 "width": 480,
                 "title": "IONIQ 5 TELEMETRY",
-                "subtitle": "Live HMG-API Vehicle Bus",
+                "subtitle": "Live Gen5W Vehicle Bus",
                 "icon": "icons/ev.svg",
                 "action": {
                   "type": "preset",

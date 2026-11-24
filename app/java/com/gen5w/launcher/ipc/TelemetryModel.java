@@ -17,8 +17,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Polls HMG-API live vehicle telemetry cleanly off the UI thread and delivers
- * immutable snapshots to the active UI when the launcher is visible.
+ * Polls live vehicle telemetry cleanly off the UI thread via HomeSwitcher's direct Binder bridge
+ * and delivers immutable snapshots to the active UI when the launcher is visible.
  */
 public final class TelemetryModel {
     public static final class Snapshot {
@@ -107,7 +107,6 @@ public final class TelemetryModel {
     private final Object wakeLock = new Object();
     private final Object stateLock = new Object();
     private final Set<String> extraKeys = new LinkedHashSet<String>();
-    private final VehicleQueryClient directClient = new VehicleQueryClient();
     private final Map<String, String> mergedValues = new LinkedHashMap<String, String>();
     private final AtomicReference<Snapshot> pendingUiSnapshot = new AtomicReference<Snapshot>();
     private final AtomicBoolean uiPostPending = new AtomicBoolean(false);
@@ -161,12 +160,11 @@ public final class TelemetryModel {
         if (keys != null) {
             for (String raw : keys) {
                 String k = canonicalKey(raw);
-                if (!"gear_speed".equals(k) && VehicleQueryClient.isHmgApiDeclaredKey(k)) {
+                if (!"gear_speed".equals(k) && VehicleQueryClient.isValidKey(k)) {
                     extraKeys.add(k);
                 }
             }
         }
-        directClient.clearQuarantine();
         needsFullSync = true;
         if (polling) {
             SwitcherClient.setVehicleKeysAsync(new ArrayList<String>(extraKeys));
@@ -355,8 +353,6 @@ public final class TelemetryModel {
         if (!runToken.get()) {
             return null;
         }
-        // Primary path: read unified 100ms Direct-Binder + HMG-API cache from root HomeSwitcher.
-        // Gives instant steering/pedal/speed/climate/seat/audio updates with zero Binder stall on the launcher.
         SwitcherClient.VehicleReply cached = SwitcherClient.fetchVehicleBlocking();
         if (!runToken.get()) {
             return null;
@@ -369,67 +365,17 @@ public final class TelemetryModel {
                 return maybeBuildChangedSnapshotLocked(true, "");
             }
 
-            // Tolerate brief transient IPC misses once connected to HomeSwitcher without triggering
-            // fallback multi-threaded directClient queries.
             if (switcherEverSucceeded && switcherConsecutiveMisses < MAX_SWITCHER_TRANSIENT_MISSES) {
                 switcherConsecutiveMisses++;
                 return null;
             }
-        }
-
-        // Fallback path: if HomeSwitcher daemon is unavailable or warming up, query hmgapid directly.
-        List<String> fastKeys = new ArrayList<String>();
-        List<String> slowKeys = new ArrayList<String>();
-        List<String> heavyKeys = new ArrayList<String>();
-        buildTieredKeys(fastKeys, slowKeys, heavyKeys);
-
-        StringBuilder errNote = new StringBuilder();
-        if (!cached.error.isEmpty()) {
-            errNote.append("svc=").append(cached.error);
-        }
-
-        VehicleQueryClient.BatchResult fastRes = directClient.query(fastKeys);
-        VehicleQueryClient.BatchResult slowRes = (dueSlow && !slowKeys.isEmpty() && runToken.get())
-                ? directClient.query(slowKeys)
-                : null;
-        VehicleQueryClient.BatchResult heavyRes = (dueHeavy && !heavyKeys.isEmpty() && runToken.get())
-                ? directClient.query(heavyKeys)
-                : null;
-
-        if (!runToken.get()) {
-            return null;
-        }
-
-        synchronized (stateLock) {
-            if (fastRes.anySuccess && !fastRes.values.isEmpty()) {
-                mergeValidReadingsLocked(mergedValues, fastRes.values);
-            } else if (!fastRes.errorNote.isEmpty()) {
-                if (errNote.length() > 0) errNote.append("; ");
-                errNote.append("fast ").append(fastRes.errorNote);
-            }
-
-            if (slowRes != null) {
-                if (slowRes.anySuccess && !slowRes.values.isEmpty()) {
-                    mergeValidReadingsLocked(mergedValues, slowRes.values);
-                } else if (!slowRes.errorNote.isEmpty() && errNote.length() < 120) {
-                    if (errNote.length() > 0) errNote.append("; ");
-                    errNote.append("slow ").append(slowRes.errorNote);
-                }
-            }
-
-            if (heavyRes != null) {
-                if (heavyRes.anySuccess && !heavyRes.values.isEmpty()) {
-                    mergeValidReadingsLocked(mergedValues, heavyRes.values);
-                } else if (!heavyRes.errorNote.isEmpty() && errNote.length() < 120) {
-                    if (errNote.length() > 0) errNote.append("; ");
-                    errNote.append("heavy ").append(heavyRes.errorNote);
-                }
-            }
-
             if (!mergedValues.isEmpty()) {
                 return maybeBuildChangedSnapshotLocked(true, "");
             }
-            return maybeBuildChangedSnapshotLocked(false, errNote.toString());
+            String err = (cached.error == null || cached.error.isEmpty())
+                    ? "vehicle bus warming up"
+                    : cached.error;
+            return maybeBuildChangedSnapshotLocked(false, err);
         }
     }
 }

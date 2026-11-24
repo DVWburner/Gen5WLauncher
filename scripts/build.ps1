@@ -6,14 +6,11 @@ Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 $Root = Split-Path -Parent $PSScriptRoot
-$Version = "0.4.9"
-$ModId = "gen5w-launcher"
+$Version = "0.5.0"
+$ArtifactPrefix = "gen5w-launcher"
+$NemesisPkgId = "gen5w.launcher"
 
-# Cross-check version consistency across mod.json, AndroidManifest.xml, and HomeSwitcher.java
-$ModJsonObj = Get-Content (Join-Path $Root "mod\mod.json") -Raw | ConvertFrom-Json
-if ($ModJsonObj.version -ne $Version) {
-    throw "Version mismatch: mod/mod.json version '$($ModJsonObj.version)' != scripts/build.ps1 Version '$Version'"
-}
+# Cross-check version consistency across AndroidManifest.xml, HomeSwitcher.java, Gen5WStudio.csproj, and PresetCatalog.cs
 $ManifestRaw = [System.IO.File]::ReadAllText((Join-Path $Root "app\AndroidManifest.xml"), [System.Text.Encoding]::UTF8)
 if ($ManifestRaw -notmatch 'android:versionName="([^"]+)"' -or $Matches[1] -ne $Version) {
     throw "Version mismatch: app/AndroidManifest.xml versionName != '$Version'"
@@ -25,6 +22,27 @@ $ManifestVersionCode = [int]$Matches[1]
 $HomeSwitcherRaw = [System.IO.File]::ReadAllText((Join-Path $Root "svc\java\com\gen5w\launcher\svc\HomeSwitcher.java"), [System.Text.Encoding]::UTF8)
 if ($HomeSwitcherRaw -notmatch 'EXPECTED_APP_VERSION_CODE\s*=\s*(\d+)\s*;' -or ([int]$Matches[1]) -ne $ManifestVersionCode) {
     throw "VersionCode mismatch: HomeSwitcher.EXPECTED_APP_VERSION_CODE != AndroidManifest.xml versionCode ($ManifestVersionCode)"
+}
+
+$CsprojRaw = [System.IO.File]::ReadAllText((Join-Path $Root "studio\Gen5WStudio\Gen5WStudio.csproj"), [System.Text.Encoding]::UTF8)
+if ($CsprojRaw -notmatch '<Version>([^<]+)</Version>' -or $Matches[1].Trim() -ne $Version) {
+    throw "Version mismatch: studio/Gen5WStudio/Gen5WStudio.csproj <Version> != '$Version'"
+}
+$PresetCatRaw = [System.IO.File]::ReadAllText((Join-Path $Root "studio\Gen5WStudio\Services\PresetCatalog.cs"), [System.Text.Encoding]::UTF8)
+if ($PresetCatRaw -notmatch 'StudioVersion\s*=\s*"([^"]+)"' -or $Matches[1] -ne $Version) {
+    throw "Version mismatch: studio/Gen5WStudio/Services/PresetCatalog.cs StudioVersion != '$Version'"
+}
+
+# Enforce zero compile-time or runtime HMG-API dependency across all Java sources
+$BadHmgRefs = Get-ChildItem -Path @(
+    (Join-Path $Root "app\java"),
+    (Join-Path $Root "svc\java"),
+    (Join-Path $Root "shared\java"),
+    (Join-Path $Root "tests\host")
+) -Recurse -Filter "*.java" | Select-String -Pattern '\bhmgapi\.(client|engine)\b'
+if ($BadHmgRefs) {
+    $badList = ($BadHmgRefs | ForEach-Object { "$($_.Path):$($_.LineNumber): $($_.Line.Trim())" }) -join "`n  "
+    throw "Forbidden HMG-API reference(s) found in Java sources:`n  $badList"
 }
 
 function Resolve-ExistingPath([string[]]$Candidates, [string]$Label) {
@@ -72,12 +90,6 @@ $FrameworkRes = Resolve-ExistingPath @(
     (Join-Path $Root "oem\framework-res.apk"),
     (Join-Path $WorkspaceParent "Gen5WThemer\oem-dump\Gen5W_Theme_Dump\04_apks\framework\framework-res.apk")
 ) "stock Gen5W framework-res.apk (provides android:disableSS)"
-
-$HmgApiRef = Resolve-ExistingPath @(
-    $env:HMGAPI_REPO,
-    (Join-Path $Root "..\HMG-API"),
-    (Join-Path $WorkspaceParent "Gen5WCAN\reference\HMG-API")
-) "HMG-API reference repository"
 
 $BuildDir = Join-Path $Root "build"
 $DistDir = Join-Path $Root "dist"
@@ -132,30 +144,53 @@ function Create-ForwardSlashZip([string]$SourceDir, [string]$OutZip) {
     }
 }
 
-# 1. Compile HMG-API client SDK and host engine classes
-$ClientClasses = Join-Path $BuildDir "hmgapi-client"
-$EngineClasses = Join-Path $BuildDir "hmgapi-engine"
-New-Item -ItemType Directory -Force -Path $ClientClasses, $EngineClasses | Out-Null
+function Assert-KitKatShellCompatible([string[]]$ScriptPaths) {
+    Write-Host "[Check shell scripts for KitKat mksh/toolbox compatibility]" -ForegroundColor Cyan
+    $forbiddenCmds = @(
+        "awk", "sed", "head", "tail", "tr", "cut", "sort", "uniq", "wc", "find", "xargs",
+        "md5sum", "sha1sum", "sha256sum", "killall", "pkill", "stat", "dirname", "basename",
+        "seq", "expr", "tee", "busybox"
+    )
+    foreach ($sp in $ScriptPaths) {
+        $bytes = [System.IO.File]::ReadAllBytes($sp)
+        if ($bytes -contains 13) {
+            throw "CRLF (0x0D) byte found in shell script: $sp"
+        }
+        $raw = [System.Text.Encoding]::UTF8.GetString($bytes)
+        $lines = $raw -split "`n"
+        if ($lines.Count -eq 0 -or $lines[0] -ne "#!/system/bin/sh") {
+            throw "Shell script must start with '#!/system/bin/sh': $sp"
+        }
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            $line = $lines[$i]
+            if ($line -match '^\s*#') { continue }
+            $code = $line -replace '(?<!["''$])\s#.*$', ''
+            if ($code -match '\bumount\s+-l\b') {
+                throw "Forbidden 'umount -l' (not supported on Gen5W toolbox) in ${sp}:$($i+1)"
+            }
+            foreach ($cmd in $forbiddenCmds) {
+                $escaped = [regex]::Escape($cmd)
+                if ($code -match "(?:^|[|;&\s(])$escaped(?:\s|`$|[|;&)])") {
+                    throw "Forbidden external command '$cmd' (missing on Gen5W KitKat) in ${sp}:$($i+1): $line"
+                }
+            }
+        }
+    }
+    Write-Host "ok  Validated $($ScriptPaths.Count) KitKat mksh/toolbox shell script(s)"
+}
 
-$HmgClientSrc = Join-Path $HmgApiRef "core\client\java\hmgapi\client\HmgApi.java"
-$SharedClientSrc = Get-ChildItem (Join-Path $Root "shared\java") -Recurse -Filter "*.java" |
+# 1. Compile shared IPC/telemetry utilities against android.jar
+$SharedClasses = Join-Path $BuildDir "shared-classes"
+New-Item -ItemType Directory -Force -Path $SharedClasses | Out-Null
+$SharedSrc = Get-ChildItem (Join-Path $Root "shared\java") -Recurse -Filter "*.java" |
     Select-Object -ExpandProperty FullName
 Invoke-Checked $Javac (@(
     "--release", "8", "-encoding", "UTF-8", "-Xlint:-options", "-nowarn",
     "-cp", $AndroidJar,
-    "-d", $ClientClasses,
-    $HmgClientSrc
-) + $SharedClientSrc) "Compile HmgApi + shared IPC client"
+    "-d", $SharedClasses
+) + $SharedSrc) "Compile shared IPC & normalization utilities"
 
-$EngineSrcFiles = Get-ChildItem (Join-Path $HmgApiRef "core\runtime\java\hmgapi\engine") -Filter "*.java" |
-    Select-Object -ExpandProperty FullName
-Invoke-Checked $Javac (@(
-    "--release", "8", "-encoding", "UTF-8", "-Xlint:-options", "-nowarn",
-    "-cp", $AndroidJar,
-    "-d", $EngineClasses
-) + $EngineSrcFiles) "Compile HMG-API Engine tools"
-
-# 2. Ensure dedicated signing keys exist in gitignored keys/
+# 2. Ensure dedicated APK signing keystore exists in gitignored keys/
 $AppKeystore = Join-Path $KeysDir "gen5w-launcher-app.p12"
 if (!(Test-Path $AppKeystore)) {
     Invoke-Checked $Keytool @(
@@ -172,20 +207,12 @@ if (!(Test-Path $AppKeystore)) {
     ) "Generate dedicated APK keystore"
 }
 
-$AuthorKey = Join-Path $KeysDir "gen5w-launcher-author.key"
-if (!(Test-Path $AuthorKey)) {
-    Invoke-Checked $Java @(
-        "-cp", $EngineClasses,
-        "hmgapi.engine.Signing",
-        "keygen", $AuthorKey
-    ) "Generate dedicated HMG-API ECDSA author key"
-}
-
-# 3. Prepare mod stage folder
-$ModStage = Join-Path $BuildDir "mod-stage"
-$ModAppDir = Join-Path $ModStage "app"
-$ModSvcDir = Join-Path $ModStage "svc"
-New-Item -ItemType Directory -Force -Path $ModAppDir, $ModSvcDir | Out-Null
+# 3. Prepare standalone NEMESIS stage folder
+$NemesisStage = Join-Path $BuildDir "nemesis-stage"
+$NemesisAppDir = Join-Path $NemesisStage "app"
+$NemesisSvcDir = Join-Path $NemesisStage "svc"
+$NemesisScriptsDir = Join-Path $NemesisStage "scripts"
+New-Item -ItemType Directory -Force -Path $NemesisAppDir, $NemesisSvcDir, $NemesisScriptsDir | Out-Null
 
 # 4. Build HomeSwitcher root service JAR (svc/home-switcher.jar)
 $SvcClasses = Join-Path $BuildDir "svc-classes"
@@ -194,13 +221,13 @@ $SvcSrcFiles = Get-ChildItem (Join-Path $Root "svc\java") -Recurse -Filter "*.ja
     Select-Object -ExpandProperty FullName
 Invoke-Checked $Javac (@(
     "--release", "8", "-encoding", "UTF-8", "-Xlint:-options", "-nowarn",
-    "-cp", "$AndroidJar;$ClientClasses",
+    "-cp", "$AndroidJar;$SharedClasses",
     "-d", $SvcClasses
-) + $SvcSrcFiles) "Compile HomeSwitcher service"
+) + $SvcSrcFiles) "Compile HomeSwitcher standalone service"
 
 $SvcInputJar = Join-Path $BuildDir "svc-input.jar"
-Invoke-Checked $Jar @("cf", $SvcInputJar, "-C", $SvcClasses, ".", "-C", $ClientClasses, ".") "Bundle HomeSwitcher classes into jar"
-$OutSvcJar = Join-Path $ModSvcDir "home-switcher.jar"
+Invoke-Checked $Jar @("cf", $SvcInputJar, "-C", $SvcClasses, ".", "-C", $SharedClasses, ".") "Bundle HomeSwitcher classes into jar"
+$OutSvcJar = Join-Path $NemesisSvcDir "home-switcher.jar"
 Invoke-Checked $Java @(
     "-Xmx1024M", "-jar", $D8Jar,
     "--release", "--min-api", "19",
@@ -231,12 +258,12 @@ $AppJavaFiles = @(Get-ChildItem (Join-Path $Root "app\java") -Recurse -Filter "*
                 @(Get-ChildItem $AppGen -Recurse -Filter "*.java" | Select-Object -ExpandProperty FullName)
 Invoke-Checked $Javac (@(
     "--release", "8", "-encoding", "UTF-8", "-Xlint:-options", "-nowarn",
-    "-cp", "$AndroidJar;$ClientClasses",
+    "-cp", "$AndroidJar;$SharedClasses",
     "-d", $AppClasses
 ) + $AppJavaFiles) "Compile Gen5WLauncher APK Java"
 
 $AppInputJar = Join-Path $AppWork "app-input.jar"
-Invoke-Checked $Jar @("cf", $AppInputJar, "-C", $AppClasses, ".", "-C", $ClientClasses, ".") "Bundle Gen5WLauncher classes into jar"
+Invoke-Checked $Jar @("cf", $AppInputJar, "-C", $AppClasses, ".", "-C", $SharedClasses, ".") "Bundle Gen5WLauncher classes into jar"
 Invoke-Checked $Java @(
     "-Xmx1024M", "-jar", $D8Jar,
     "--release", "--min-api", "19",
@@ -261,7 +288,7 @@ try {
 
 Invoke-Checked $ZipAlign @("-f", "4", $UnsignedApk, $AlignedApk) "Zipalign APK"
 
-$OutApk = Join-Path $ModAppDir "Gen5WLauncher.apk"
+$OutApk = Join-Path $NemesisAppDir "Gen5WLauncher.apk"
 Invoke-Checked $Java @(
     "-Xmx1024M", "-jar", $ApkSignerJar,
     "sign",
@@ -274,76 +301,37 @@ Invoke-Checked $Java @(
     $AlignedApk
 ) "Sign APK (v1 JAR scheme for KitKat)"
 
-# 6. Copy mod metadata, sign HMG-API mod, and package HMG-API ZIP
-Copy-FileNormalizedLf (Join-Path $Root "mod\mod.json") (Join-Path $ModStage "mod.json")
-Copy-FileNormalizedLf (Join-Path $Root "mod\settings.json") (Join-Path $ModStage "settings.json")
-
-Invoke-Checked $Java @(
-    "-cp", $EngineClasses,
-    "hmgapi.engine.Signing",
-    "sign", $ModStage, $AuthorKey
-) "Sign HMG-API mod stage"
-
-Invoke-Checked $Java @(
-    "-cp", $EngineClasses,
-    "hmgapi.engine.Signing",
-    "verify", $ModStage
-) "Verify HMG-API mod signature"
-
-$ModZip = Join-Path $DistDir "$ModId-$Version.zip"
-Create-ForwardSlashZip $ModStage $ModZip
-
-# 7. Build NEMESIS inner package + USB installer wrapper ZIPs (matches HMG-API tools/mknemesismod.sh)
-$NemesisPkgId = "hmgapi.$ModId"
-$NemesisStage = Join-Path $BuildDir "nemesis-stage"
-$NemesisScripts = Join-Path $NemesisStage "scripts"
-$NemesisBin = Join-Path $NemesisStage "bin"
-$NemesisMod = Join-Path $NemesisStage "mod"
-New-Item -ItemType Directory -Force -Path $NemesisScripts, $NemesisBin, $NemesisMod | Out-Null
-
-$TemplateIn = [System.IO.File]::ReadAllText((Join-Path $HmgApiRef "install\nemesis\mod\NEMESIS.data.in"), [System.Text.Encoding]::UTF8)
-$Descriptor = $TemplateIn.
-    Replace("@PACKAGE_ID@", $NemesisPkgId).
-    Replace("@NAME@", "Gen5W Theme Launcher").
-    Replace("@PACKAGE_VERSION@", $Version).
-    Replace("@SHORT_DESC@", "Themed Homescreen Replacement").
-    Replace("@DETAILED_DESC@", "Replaces the main homescreen. Download and make custom themes from https://market.ioniqthemes.com").
-    Replace("@OS@", "any").
-    Replace("@DEPENDS@", "hmgapi@>=1.0")
+# 6. Populate standalone NEMESIS package descriptor & lifecycle scripts
+$NemesisTemplateIn = [System.IO.File]::ReadAllText((Join-Path $Root "nemesis\NEMESIS.data.in"), [System.Text.Encoding]::UTF8)
+$Descriptor = $NemesisTemplateIn.Replace("@PACKAGE_VERSION@", $Version)
 Write-Utf8Lf (Join-Path $NemesisStage "NEMESIS.data") $Descriptor
 
+Copy-FileNormalizedLf (Join-Path $Root "nemesis\svc\home-switcher.sh") (Join-Path $NemesisSvcDir "home-switcher.sh")
 foreach ($s in @("preinstall.sh", "postinstall.sh", "preuninstall.sh")) {
-    Copy-FileNormalizedLf (Join-Path $HmgApiRef "install\nemesis\mod\scripts\$s") (Join-Path $NemesisScripts $s)
+    Copy-FileNormalizedLf (Join-Path $Root "nemesis\scripts\$s") (Join-Path $NemesisScriptsDir $s)
 }
-Copy-FileNormalizedLf (Join-Path $Root "mod\nemesis\bin\open.sh") (Join-Path $NemesisBin "open.sh")
-Write-Utf8Lf (Join-Path $NemesisMod "id") "$ModId`n"
-Copy-Item $ModZip (Join-Path $NemesisMod "package.zip") -Force
 
-$UnitCmds = Join-Path $HmgApiRef "core\runtime\unit-commands.txt"
 $AllScripts = Get-ChildItem $NemesisStage -Recurse -Filter "*.sh" | Select-Object -ExpandProperty FullName
-Invoke-Checked $Java (@(
-    "-cp", $EngineClasses,
-    "hmgapi.engine.ScriptCheck",
-    $UnitCmds
-) + $AllScripts) "Check shell scripts for KitKat mksh/toolbox compatibility"
+Assert-KitKatShellCompatible $AllScripts
 
-$NemesisPkgZip = Join-Path $DistDir "$ModId-$Version-nemesis-package.zip"
+$NemesisPkgZip = Join-Path $DistDir "$ArtifactPrefix-$Version-nemesis-package.zip"
 Create-ForwardSlashZip $NemesisStage $NemesisPkgZip
 
+# 7. Build NEMESIS USB installer wrapper ZIP + copy into Gen5W Studio embedded Assets
 $NemesisStickStage = Join-Path $BuildDir "nemesis-stick"
 $NemesisStickPkgs = Join-Path $NemesisStickStage "packages"
 New-Item -ItemType Directory -Force -Path $NemesisStickPkgs | Out-Null
 Copy-Item $NemesisPkgZip (Join-Path $NemesisStickPkgs "$NemesisPkgId.zip") -Force
 Write-Utf8Lf (Join-Path $NemesisStickStage "NEMESIS.data") "[nemesis]`nversion=1.0`ntype=install`npath=packages/$NemesisPkgId.zip`n"
 
-$ReadmeIn = [System.IO.File]::ReadAllText((Join-Path $HmgApiRef "install\nemesis\mod\README.txt"), [System.Text.Encoding]::UTF8)
+$ReadmeIn = [System.IO.File]::ReadAllText((Join-Path $Root "nemesis\README.txt"), [System.Text.Encoding]::UTF8)
 $ReadmeOut = $ReadmeIn.
     Replace("@NAME@", "Gen5W Theme Launcher").
     Replace("@VERSION@", $Version).
     Replace("@PACKAGE_ID@", $NemesisPkgId)
 Write-Utf8Lf (Join-Path $NemesisStickStage "README.txt") $ReadmeOut
 
-$NemesisZip = Join-Path $DistDir "$ModId-$Version-nemesis.zip"
+$NemesisZip = Join-Path $DistDir "$ArtifactPrefix-$Version-nemesis.zip"
 Create-ForwardSlashZip $NemesisStickStage $NemesisZip
 
 $StudioInstallerAsset = Join-Path $Root "studio\Gen5WStudio\Assets\gen5w-launcher-nemesis.zip"
@@ -382,13 +370,31 @@ try {
     $svcArchive.Dispose()
 }
 
-foreach ($lfFile in (@(Get-ChildItem $NemesisStage -Recurse -Include "*.sh","NEMESIS.data","id") + @(Get-ChildItem $NemesisStickStage -Recurse -Include "NEMESIS.data","README.txt") + @(Get-ChildItem $ModStage -Filter "*.json"))) {
+$InnerMeta = [System.IO.File]::ReadAllText((Join-Path $NemesisStage "NEMESIS.data"), [System.Text.Encoding]::UTF8)
+foreach ($reqLine in @(
+    'id=gen5w.launcher',
+    'type=application,service',
+    "package-version=$Version",
+    'name=Gen5W Theme Launcher',
+    'short-desc="Themed Homescreen Replacement"',
+    'detailed-desc="Replaces the main homescreen. Download and make custom themes from https://market.ioniqthemes.com"'
+)) {
+    if (-not $InnerMeta.Contains($reqLine)) {
+        throw "Inner NEMESIS.data missing required line: $reqLine"
+    }
+}
+if ($InnerMeta -match '(?m)^depends=' -or $InnerMeta -match 'hmgapi') {
+    throw "Inner NEMESIS.data must NOT depend on or reference hmgapi"
+}
+Write-Host "ok  Inner NEMESIS.data standalone metadata verified (id=$NemesisPkgId, no depends)"
+
+foreach ($lfFile in (@(Get-ChildItem $NemesisStage -Recurse -Include "*.sh","NEMESIS.data") + @(Get-ChildItem $NemesisStickStage -Recurse -Include "NEMESIS.data","README.txt"))) {
     $bytes = [System.IO.File]::ReadAllBytes($lfFile.FullName)
     if ($bytes -contains 13) { throw "CRLF found in $($lfFile.FullName)" }
 }
 Write-Host "ok  All scripts and descriptors strictly LF (0 CR bytes)"
 
-foreach ($z in @($ModZip, $NemesisPkgZip, $NemesisZip)) {
+foreach ($z in @($NemesisPkgZip, $NemesisZip)) {
     $za = [System.IO.Compression.ZipFile]::OpenRead($z)
     try {
         foreach ($e in $za.Entries) {
@@ -418,34 +424,10 @@ foreach ($s in $SvgFiles) {
 }
 Write-Host "ok  Validated default ThemePack layout.json and $($SvgFiles.Count) SVG icon assets"
 
-# 10. Host simulation: install & plan through HMG-API Engine for NEEV.USA.260507
-$FakeRoot = Join-Path $BuildDir "host-sim"
-New-Item -ItemType Directory -Force -Path "$FakeRoot\data\hmgapi\mods", "$FakeRoot\system\etc\permissions" | Out-Null
-Write-Utf8Lf "$FakeRoot\props.txt" "ro.build.product=NEEV.USA.S5W_M.V015.012.260507`nro.build.version.release=4.4.2`nro.board.platform=tcc803x`n"
-$prevRoot = $env:HMGAPI_ROOT
-$prevHost = $env:HMGAPI_HOST
-$prevProd = $env:HMGAPI_PRODUCT
-try {
-    $env:HMGAPI_ROOT = $FakeRoot
-    $env:HMGAPI_HOST = "1"
-    $env:HMGAPI_PRODUCT = "NEEV.USA.S5W_M.V015.012.260507"
-    $instOut = & $Java -cp $EngineClasses hmgapi.engine.Engine install $ModZip 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0) { throw "Engine host install failed:`n$instOut" }
-    $planOut = & $Java -cp $EngineClasses hmgapi.engine.Engine plan 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0) { throw "Engine host plan failed:`n$planOut" }
-    if ($planOut -match "(?m)^problem ") { throw "Engine host plan reported problems:`n$planOut" }
-    Write-Host "ok  HMG-API Engine host install & plan clean for NEEV.USA.S5W_M.V015.012.260507"
-} finally {
-    $env:HMGAPI_ROOT = $prevRoot
-    $env:HMGAPI_HOST = $prevHost
-    $env:HMGAPI_PRODUCT = $prevProd
-}
-
-# 11. Run host JVM unit test suite for Theme Store TLS, HTTP client & ZIP security
+# 10. Run host JVM unit test suite for Theme Store TLS, JSON parsing & ZIP security (zero external dependencies)
 $HostTestDir = Join-Path $BuildDir "host-test-classes"
 New-Item -ItemType Directory -Force -Path $HostTestDir | Out-Null
 $HostTestSrcs = @(
-    (Join-Path $HmgApiRef "core\runtime\java\hmgapi\engine\Json.java"),
     (Join-Path $Root "shared\java\com\gen5w\launcher\ipc\TemperatureNormalizer.java"),
     (Join-Path $Root "app\java\com\gen5w\launcher\store\StoreTlsHelper.java"),
     (Join-Path $Root "app\java\com\gen5w\launcher\store\StoreThemeListing.java"),
@@ -462,6 +444,5 @@ Invoke-Checked $Javac (@(
 Invoke-Checked $Java @("-cp", $HostTestDir, "ThemeStoreHostTest") "Run host Store & ZIP security tests"
 
 Write-Host "`nBUILD SUCCEEDED" -ForegroundColor Green
-Write-Host "  HMG-API Mod ZIP     : $ModZip"
 Write-Host "  NEMESIS Package ZIP : $NemesisPkgZip"
 Write-Host "  NEMESIS USB ZIP     : $NemesisZip"

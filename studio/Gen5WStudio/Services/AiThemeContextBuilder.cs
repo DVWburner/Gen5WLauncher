@@ -68,6 +68,7 @@ public static class AiThemeContextBuilder
         sb.AppendLine("- **Strict Security Validator (`ThemePackageService` / `SafeThemeZipExtractor`):**");
         sb.AppendLine("  - Allowed file extensions ONLY: `.json`, `.svg`, `.png`, `.jpg`, `.jpeg`, `.webp`, `.gif`, `.ttf`, `.otf`.");
         sb.AppendLine("  - `.json` files are ONLY allowed at root `layout.json`, root `manifest.json`, and `anim/<slot>/frames.json`.");
+        sb.AppendLine("  - Gen5W Studio automatically packages **only** the asset files actively referenced by `layout.json` (and the active `background.type`) when building `.zip` bundles or exporting to USB.");
         sb.AppendLine("  - NEVER include `.html`, `.js`, `.sh`, `.ps1`, `.exe`, `.apk`, `.dex`, hidden OS files, symlinks, or `..` path segments.");
         sb.AppendLine("  - **KitKat Custom SVG Rules (`MiniSvgDrawable`):** Custom SVGs in `icons/*.svg` must be clean `<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\">` using `<path>`, `<circle>`, `<rect>`, `<line>`, `<polyline>`, `<polygon>` (path commands `M,L,H,V,C,S,Q,T,A,Z`; `fill`, `stroke`, `stroke-width`, `stroke-linecap`, `stroke-linejoin`, `opacity`). NEVER use `<script>`, `on*` event attributes, external `xlink:href`, `<foreignObject>`, CSS `<style>` classes, `<filter>`, `<mask>`, or `<text>`.");
         sb.AppendLine();
@@ -198,6 +199,9 @@ public static class AiThemeContextBuilder
         sb.AppendLine("  - On `tile` or `action_pill`, if `title` is static (e.g. `\"Climate\"`) and `subtitle` is empty or `\"State: {value}\"`, `{value}` resolves `telemetryKey` automatically.");
         sb.AppendLine("- **Multi-Sensor String Interpolation (`{any_sensor_key}`):** `title`, `subtitle`, and `badgeText` can embed **any number** of sensor keys in curly braces, e.g. `\"subtitle\": \"SOC {hv.soc} • Range {hv.range} • Pack {hv.battery_temp_min}\"`.");
         sb.AppendLine("- **Custom `unit` Override:** Leave `unit` omitted/empty to use the sensor's smart formatted string (respecting `tokens.speedUnit` and `tokens.tempUnit`), or set `unit` explicitly when needed.");
+        sb.AppendLine("- **Direct Standalone Vehicle Bus Notes (`v0.5.0`, no HMG-API required):**");
+        sb.AppendLine("  - `tyre.fl_psi`, `tyre.fr_psi`, `tyre.rl_psi`, `tyre.rr_psi` decode live CAN-FD `0x03A1` TPMS pressures once rolling (automatically falling back to `\"OK\"` / `\"LOW\"` while parked before TPMS RF sensors wake, and supporting `\"psi\"`, `\"bar\"`, or `\"kPa\"` `unit` overrides).");
+        sb.AppendLine("  - `energy.drivetrain_kw`, `energy.climate_kw`, `energy.electronics_w`, and `energy.care_kw` report live EV Energy Flow directly from `IHEVService` with zero HMG-API dependency.");
         sb.AppendLine();
         sb.AppendLine("### Available Live Telemetry Keys (`telemetryKey`)");
         foreach (var s in PresetCatalog.TelemetrySensors)

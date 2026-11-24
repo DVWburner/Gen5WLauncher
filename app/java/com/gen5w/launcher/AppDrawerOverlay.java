@@ -284,8 +284,8 @@ final class AppDrawerOverlay extends FrameLayout {
 
         if (!sections.stockAndHmgApi.isEmpty()) {
             addSectionHeader(
-                    "STOCK LAUNCHER & HMG-API (" + sections.stockAndHmgApi.size() + ")",
-                    "NEMESIS, HMG-API mods & curated OEM vehicle shortcuts",
+                    "STOCK LAUNCHER & ADD-ONS (" + sections.stockAndHmgApi.size() + ")",
+                    "Installed NEMESIS / mod add-ons & curated OEM vehicle shortcuts",
                     0xFF38BDF8,
                     false);
             addAppGrid(sections.stockAndHmgApi);

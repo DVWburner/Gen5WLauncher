@@ -1,6 +1,5 @@
 package org.json;
 
-import hmgapi.engine.Json;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -14,7 +13,7 @@ public class JSONObject {
     }
 
     public JSONObject(String json) {
-        this.map = Json.object(json);
+        this.map = SimpleJsonParser.parseObject(json);
     }
 
     JSONObject(Map<String, Object> map) {
@@ -106,11 +105,11 @@ public class JSONObject {
     }
 
     public String toString(int indentFactor) {
-        return Json.write(map);
+        return SimpleJsonParser.write(map);
     }
 
     @Override
     public String toString() {
-        return Json.write(map);
+        return SimpleJsonParser.write(map);
     }
 }

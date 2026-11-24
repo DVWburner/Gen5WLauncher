@@ -39,7 +39,7 @@ public sealed class ActionPresetOption
 
 public static class PresetCatalog
 {
-    public const string StudioVersion = "0.4.9";
+    public const string StudioVersion = "0.5.0";
     public const string DefaultMinAppVersion = "0.4.0";
 
     public static IReadOnlyList<string> ThemeCategories { get; } = new List<string>
@@ -451,10 +451,10 @@ public static class PresetCatalog
         new("tyre.fr_status", "Front-Right Tire Status (OK / LOW)", "", 0, 1),
         new("tyre.rl_status", "Rear-Left Tire Status (OK / LOW)", "", 0, 1),
         new("tyre.rr_status", "Rear-Right Tire Status (OK / LOW)", "", 0, 1),
-        new("tyre.fl_psi", "Front-Left Tire Pressure (psi)", "psi", 0, 60),
-        new("tyre.fr_psi", "Front-Right Tire Pressure (psi)", "psi", 0, 60),
-        new("tyre.rl_psi", "Rear-Left Tire Pressure (psi)", "psi", 0, 60),
-        new("tyre.rr_psi", "Rear-Right Tire Pressure (psi)", "psi", 0, 60),
+        new("tyre.fl_psi", "Front-Left Tire Pressure (Live PSI while rolling; OK/LOW parked)", "psi", 0, 60),
+        new("tyre.fr_psi", "Front-Right Tire Pressure (Live PSI while rolling; OK/LOW parked)", "psi", 0, 60),
+        new("tyre.rl_psi", "Rear-Left Tire Pressure (Live PSI while rolling; OK/LOW parked)", "psi", 0, 60),
+        new("tyre.rr_psi", "Rear-Right Tire Pressure (Live PSI while rolling; OK/LOW parked)", "psi", 0, 60),
         new("energy.drivetrain_kw", "Drivetrain Power Draw (kW)", "kW", 0, 250),
         new("energy.climate_kw", "Climate Power Draw (kW)", "kW", 0, 10),
         new("energy.electronics_w", "Electronics Load (W)", "W", 0, 1500),

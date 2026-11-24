@@ -103,6 +103,8 @@ public sealed class ThemeSecurityAuditResult
     public List<string> Warnings { get; } = new();
     public List<ThemeManifestFileEntry> IncludedFiles { get; } = new();
     public List<string> RejectedFiles { get; } = new();
+    public List<string> ExcludedUnusedFiles { get; } = new();
+    public long ExcludedUnusedBytes { get; set; }
     public long TotalBytes { get; set; }
     public bool IsSafe => IsSingleTheme && Errors.Count == 0 && RejectedFiles.Count == 0;
 }

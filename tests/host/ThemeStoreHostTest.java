@@ -70,6 +70,7 @@ public final class ThemeStoreHostTest {
             testTemperatureNormalizerCrossUnit();
             testStoreHttpMockClient(tmpRoot);
             testSafeZipExtractorPassAndSecurity(tmpRoot);
+            testLegacyThemeBackwardsCompatibility(tmpRoot);
             if (runLive) {
                 testLiveStoreEndpoint(tmpRoot);
             }
@@ -123,12 +124,14 @@ public final class ThemeStoreHostTest {
         l.minAppVersion = "0.3.4";
         l.compatibleVersions.add("0.3.4+");
         check(l.isCompatibleWith("0.3.5"), "0.3.4+ should match 0.3.5");
+        check(l.isCompatibleWith("0.5.0"), "0.3.4+ should match 0.5.0");
         check(!l.isCompatibleWith("0.3.3"), "0.3.4+ must not match 0.3.3");
 
         StoreThemeListing newer = new StoreThemeListing();
         newer.minAppVersion = "0.4.0";
         newer.compatibleVersions.add("0.4.0+");
         check(!newer.isCompatibleWith("0.3.5"), "0.4.0+ must warn on 0.3.5");
+        check(newer.isCompatibleWith("0.5.0"), "0.4.0+ should match 0.5.0");
 
         long ms = StoreThemeListing.parseIsoUtcMillis("2026-11-19T00:45:21Z");
         check(ms > 0L, "ISO timestamp parsing failed");
@@ -451,6 +454,79 @@ public final class ThemeStoreHostTest {
                 "Empty unit override must preserve car native unit");
 
         System.out.println("ok  TemperatureNormalizer: 14C/-40F bug -> 57F, US 73F -> 23C, real -40, & HVAC C<->F verified");
+    }
+
+    private static void testLegacyThemeBackwardsCompatibility(File tmpRoot) throws Exception {
+        String legacyLayout = "{\n"
+                + "  \"formatVersion\": 1,\n"
+                + "  \"id\": \"legacy-v03-theme\",\n"
+                + "  \"name\": \"Legacy v0.3 Theme\",\n"
+                + "  \"author\": \"Pioneer\",\n"
+                + "  \"version\": \"1.0.0\",\n"
+                + "  \"background\": { \"type\": \"bitmap\", \"posterAsset\": \"media/old_bg.jpg\" },\n"
+                + "  \"pages\": [\n"
+                + "    {\n"
+                + "      \"id\": \"pg1\",\n"
+                + "      \"title\": \"Main\",\n"
+                + "      \"layout\": \"grid\",\n"
+                + "      \"paddingPx\": 20,\n"
+                + "      \"children\": [\n"
+                + "        { \"id\": \"w_clock\", \"type\": \"clock\" },\n"
+                + "        {\n"
+                + "          \"id\": \"w_ring\", \"kind\": \"ring_gauge\", \"telemetryKey\": \"hv_soc\",\n"
+                + "          \"marginPx\": [12, 8],\n"
+                + "          \"style\": { \"gradientEndColor\": \"#FF112233\", \"fontSizePx\": 28, \"animAsset\": \"anim/wave\", \"animFps\": 12 },\n"
+                + "          \"action\": { \"type\": \"preset\", \"preset\": \"ev\" }\n"
+                + "        },\n"
+                + "        {\n"
+                + "          \"id\": \"w_app\", \"kind\": \"tile\", \"title\": \"Nav\",\n"
+                + "          \"action\": { \"type\": \"broadcast\", \"pkg\": \"com.example\", \"cls\": \".Main\", \"action\": \"com.example.ACT\", \"extraIntKey\": \"mode\", \"extraIntValue\": 2 }\n"
+                + "        }\n"
+                + "      ]\n"
+                + "    }\n"
+                + "  ]\n"
+                + "}\n";
+
+        Map<String, byte[]> legacyFiles = new LinkedHashMap<String, byte[]>();
+        legacyFiles.put("layout.json", legacyLayout.getBytes(StandardCharsets.UTF_8));
+        legacyFiles.put("manifest.json", "{\"manifestVersion\":1,\"theme\":{\"id\":\"legacy-v03-theme\",\"name\":\"Legacy v0.3 Theme\",\"studioVersion\":\"0.3.9\",\"revision\":1}}".getBytes(StandardCharsets.UTF_8));
+        legacyFiles.put("thumbnail.jpg", JPG_HDR);
+        legacyFiles.put("media/old_bg.jpg", JPG_HDR);
+        legacyFiles.put("media/unused_old_wallpaper.jpg", JPG_HDR);
+        legacyFiles.put("icons/music.svg", VALID_SVGREPO.getBytes(StandardCharsets.UTF_8));
+        legacyFiles.put("anim/wave/frames.json", "{\"fps\":12,\"frames\":[\"f_0001.jpg\"]}".getBytes(StandardCharsets.UTF_8));
+        legacyFiles.put("anim/wave/f_0001.jpg", JPG_HDR);
+
+        File legacyZip = new File(tmpRoot, "legacy_v039.zip");
+        writeZip(legacyZip, legacyFiles, -1);
+
+        SafeThemeZipExtractor.ZipSummary sum = SafeThemeZipExtractor.inspectSummary(legacyZip, true);
+        check(sum.error.isEmpty(), "Legacy ZIP summary failed: " + sum.error);
+        check("legacy-v03-theme".equals(sum.id) && sum.thumbnailBytes != null, "Legacy ZIP summary metadata mismatch");
+
+        File outDir = new File(tmpRoot, "legacy_extracted");
+        SafeThemeZipExtractor.ExtractResult res = SafeThemeZipExtractor.extractSafely(legacyZip, outDir);
+        com.gen5w.launcher.model.ThemePack pack = res.pack;
+        check(pack != null && pack.formatVersion == 1, "Legacy formatVersion mismatch");
+        check("media/old_bg.jpg".equals(pack.background.bitmapAsset), "Legacy posterAsset alias failed");
+        check("pager".equals(pack.root.layout) && pack.root.children.size() == 1, "Legacy top-level pages conversion failed");
+        com.gen5w.launcher.model.PanelSpec pg = (com.gen5w.launcher.model.PanelSpec) pack.root.children.get(0);
+        check("Main".equals(pg.pageTitle) && pg.paddingPx[0] == 20 && pg.paddingPx[3] == 20, "Legacy panel padding/title failed");
+        com.gen5w.launcher.model.WidgetSpec clock = (com.gen5w.launcher.model.WidgetSpec) pg.children.get(0);
+        com.gen5w.launcher.model.WidgetSpec ring = (com.gen5w.launcher.model.WidgetSpec) pg.children.get(1);
+        com.gen5w.launcher.model.WidgetSpec app = (com.gen5w.launcher.model.WidgetSpec) pg.children.get(2);
+        check("clock".equals(clock.kind), "Legacy widget type->kind fallback failed");
+        check("ring_gauge".equals(ring.kind) && "hv_soc".equals(ring.telemetryKey), "Legacy ring_gauge/hv_soc failed");
+        check(ring.marginPx[0] == 12 && ring.marginPx[1] == 8 && ring.style.bgEndColor == 0xFF112233
+                && Math.round(ring.style.titleSizePx) == 28 && "anim/wave".equals(ring.style.bgAnimAsset)
+                && ring.style.bgAnimFps == 12 && "ev".equals(ring.action.cmd), "Legacy style/preset aliases failed");
+        check("com.example".equals(app.action.pkg) && ".Main".equals(app.action.cls)
+                && "com.example.ACT".equals(app.action.actionName)
+                && "mode".equals(app.action.extraKey) && "int".equals(app.action.extraType)
+                && "2".equals(app.action.extraVal), "Legacy action aliases failed");
+        check(new File(outDir, "media/unused_old_wallpaper.jpg").isFile()
+                && new File(outDir, "icons/music.svg").isFile(), "Extra assets in legacy ZIP should still extract safely");
+        System.out.println("ok  Backwards compatibility verified for legacy v0.1-v0.4.x ThemePack JSON & pre-v0.5.0 ZIPs");
     }
 
     private static void check(boolean cond, String msg) {

@@ -3374,7 +3374,7 @@ public partial class MainWindow : Window
         if (multiOpened.Count != 2) throw new InvalidOperationException("Opening multi-theme pack failed.");
         var defaultInstaller = NemesisInstallerService.ResolveDefaultInstaller()
             ?? throw new InvalidOperationException("NemesisInstallerService failed to resolve default/bundled installer.");
-        if (!Version.TryParse(defaultInstaller.Version, out var resolvedVer) || resolvedVer < new Version(0, 3, 9))
+        if (!Version.TryParse(defaultInstaller.Version, out var resolvedVer) || resolvedVer < new Version(0, 5, 0))
             throw new InvalidOperationException($"NemesisInstallerService resolved stale/unknown version '{defaultInstaller.Version}' ({defaultInstaller.DisplaySource}).");
         var exportDlg = new ExportUsbDialog(workspace, currentPack);
         string simUsbRoot = Path.Combine(workspace.PacksRootDir, "_sim_usb");
@@ -3383,7 +3383,9 @@ public partial class MainWindow : Window
         if (expThemes != 2
             || expVer != defaultInstaller.Version
             || !File.Exists(Path.Combine(simUsbRoot, "NEMESIS.data"))
-            || !File.Exists(Path.Combine(simUsbRoot, "packages", "hmgapi.gen5w-launcher.zip"))
+            || !File.Exists(Path.Combine(simUsbRoot, "packages", "gen5w.launcher.zip"))
+            || !expInstFiles.Contains("packages/gen5w.launcher.zip")
+            || NemesisInstallerService.HasUnrelatedNemesisInstallOnUsb(simUsbRoot, out _)
             || !File.Exists(Path.Combine(simUsbRoot, "README.txt"))
             || !File.ReadAllText(Path.Combine(simUsbRoot, "README.txt")).Contains(defaultInstaller.Version, StringComparison.Ordinal)
             || !File.Exists(Path.Combine(simUsbRoot, "Gen5WLauncher", "packs", "alpha", "layout.json"))
@@ -3665,7 +3667,10 @@ public partial class MainWindow : Window
         {
             string pkgWsDir = Path.Combine(storeTestRoot, "ws");
             Directory.CreateDirectory(Path.Combine(pkgWsDir, "icons"));
+            Directory.CreateDirectory(Path.Combine(pkgWsDir, "img"));
+            Directory.CreateDirectory(Path.Combine(pkgWsDir, "media"));
             Directory.CreateDirectory(Path.Combine(pkgWsDir, "anim", "backdrop_200858"));
+            Directory.CreateDirectory(Path.Combine(pkgWsDir, "anim", "backdrop_old_140112"));
             Directory.CreateDirectory(Path.Combine(pkgWsDir, "packs", "other-theme", "icons"));
             var pkgPack = PresetCatalog.CreateNewPack("store-test", "Store Test Theme", "Tester", "blank_grid", true);
             pkgPack.Revision = 3;
@@ -3673,16 +3678,46 @@ public partial class MainWindow : Window
             pkgPack.MinAppVersion = "0.3.4";
             pkgPack.CompatibleVersions = new List<string> { "0.3.4+" };
             pkgPack.Description = "Self-test verified single theme";
+            // Active background is animated_frames ("anim/backdrop_200858"), while BitmapAsset holds a stale previously-tried wallpaper
+            pkgPack.Background.Type = "animated_frames";
+            pkgPack.Background.FramesDir = "anim/backdrop_200858";
+            pkgPack.Background.BitmapAsset = "media/tried_bg_1.jpg";
+            pkgPack.Root.Children ??= new List<LayoutNodeModel>();
+            pkgPack.Root.Children.Add(new LayoutNodeModel { Id = "used_dot", Kind = "tile", Title = "Dot", Icon = "icons/dot.svg" });
+            pkgPack.Root.Children.Add(new LayoutNodeModel { Id = "used_svgrepo", Kind = "tile", Title = "Repo", Icon = "icons/svgrepo_test.svg" });
+            pkgPack.Root.Children.Add(new LayoutNodeModel { Id = "text_with_stale_icon", Kind = "text", Title = "Plain Text", Icon = "icons/unused_custom.svg" });
             ThemePackageService.StampPackDatesForRelease(pkgPack);
             File.WriteAllText(Path.Combine(pkgWsDir, "layout.json"), pkgPack.ToJsonString());
+
+            // Actively referenced assets (use a real valid 4x4 JPEG so WPF WIC decoding succeeds during tests)
+            var jpgWb = new WriteableBitmap(4, 4, 96, 96, System.Windows.Media.PixelFormats.Bgr24, null);
+            jpgWb.WritePixels(new Int32Rect(0, 0, 4, 4), new byte[4 * 4 * 3], 4 * 3, 0);
+            var jpgEnc = new JpegBitmapEncoder { QualityLevel = 80 };
+            jpgEnc.Frames.Add(BitmapFrame.Create(jpgWb));
+            using var jpgMs = new MemoryStream();
+            jpgEnc.Save(jpgMs);
+            byte[] validJpegBytes = jpgMs.ToArray();
             File.WriteAllText(Path.Combine(pkgWsDir, "icons", "dot.svg"),
                 "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"12\" r=\"6\" fill=\"#38BDF8\"/></svg>");
             File.WriteAllText(Path.Combine(pkgWsDir, "icons", "svgrepo_test.svg"),
                 "<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\">\n<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path d=\"M0 0\"/></svg>");
             File.WriteAllText(Path.Combine(pkgWsDir, "anim", "backdrop_200858", "frames.json"),
                 "{\"fps\":12,\"frames\":[\"f_0001.jpg\"]}");
-            File.WriteAllBytes(Path.Combine(pkgWsDir, "anim", "backdrop_200858", "f_0001.jpg"),
-                new byte[] { 0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46 });
+            File.WriteAllBytes(Path.Combine(pkgWsDir, "anim", "backdrop_200858", "f_0001.jpg"), validJpegBytes);
+
+            // Unused / orphaned workspace assets (previously-tried wallpapers, old video conversions, unreferenced icons/images)
+            File.WriteAllBytes(Path.Combine(pkgWsDir, "media", "tried_bg_1.jpg"), validJpegBytes);
+            File.WriteAllBytes(Path.Combine(pkgWsDir, "media", "tried_bg_2.jpg"), validJpegBytes);
+            File.WriteAllBytes(Path.Combine(pkgWsDir, "anim", "backdrop_200858", "extra_unlisted.jpg"), validJpegBytes);
+            File.WriteAllText(Path.Combine(pkgWsDir, "anim", "backdrop_old_140112", "frames.json"),
+                "{\"fps\":12,\"frames\":[\"f_0001.jpg\"]}");
+            File.WriteAllBytes(Path.Combine(pkgWsDir, "anim", "backdrop_old_140112", "f_0001.jpg"), validJpegBytes);
+            File.WriteAllText(Path.Combine(pkgWsDir, "icons", "unused_custom.svg"),
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><circle cx=\"5\" cy=\"5\" r=\"2\"/></svg>");
+            File.WriteAllText(Path.Combine(pkgWsDir, "icons", "music.svg"),
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><circle cx=\"5\" cy=\"5\" r=\"2\"/></svg>");
+            File.WriteAllBytes(Path.Combine(pkgWsDir, "img", "unused_pic.jpg"), validJpegBytes);
+
             // Unrelated packs/ subfolder must be skipped cleanly when packaging only the active theme
             File.WriteAllText(Path.Combine(pkgWsDir, "packs", "other-theme", "layout.json"), pkgPack.ToJsonString());
             File.WriteAllText(Path.Combine(pkgWsDir, "packs", "other-theme", "icons", "x.svg"), "<svg/>");
@@ -3693,11 +3728,35 @@ public partial class MainWindow : Window
                 throw new InvalidOperationException("Single-theme manifest metadata mismatch.");
             if (builtPkg.Audit.IncludedFiles.Any(f => f.Path.StartsWith("packs/", StringComparison.OrdinalIgnoreCase)))
                 throw new InvalidOperationException("Unrelated packs/ folder should not have been packaged.");
-            if (!builtPkg.Audit.IncludedFiles.Any(f => f.Path == "anim/backdrop_200858/frames.json"))
-                throw new InvalidOperationException("anim/*/frames.json should have been included in single-theme package.");
+            if (!builtPkg.Audit.IncludedFiles.Any(f => f.Path == "anim/backdrop_200858/frames.json")
+                || !builtPkg.Audit.IncludedFiles.Any(f => f.Path == "anim/backdrop_200858/f_0001.jpg"))
+                throw new InvalidOperationException("Referenced anim/backdrop_200858 frames should have been included in single-theme package.");
+            if (builtPkg.Audit.IncludedFiles.Any(f =>
+                    f.Path.StartsWith("media/", StringComparison.OrdinalIgnoreCase)
+                    || f.Path.StartsWith("anim/backdrop_old_140112/", StringComparison.OrdinalIgnoreCase)
+                    || f.Path == "anim/backdrop_200858/extra_unlisted.jpg"
+                    || f.Path == "icons/unused_custom.svg"
+                    || f.Path == "icons/music.svg"
+                    || f.Path == "img/unused_pic.jpg"))
+            {
+                throw new InvalidOperationException("Unused workspace assets leaked into built .zip package: "
+                    + string.Join(", ", builtPkg.Audit.IncludedFiles.Select(f => f.Path)));
+            }
+            if (builtPkg.Audit.ExcludedUnusedFiles.Count < 7)
+                throw new InvalidOperationException($"Expected at least 7 excluded unused files, got {builtPkg.Audit.ExcludedUnusedFiles.Count}.");
 
             using (var checkZip = ZipFile.OpenRead(outZip))
             {
+                if (checkZip.GetEntry("media/tried_bg_1.jpg") != null
+                    || checkZip.GetEntry("media/tried_bg_2.jpg") != null
+                    || checkZip.GetEntry("anim/backdrop_old_140112/f_0001.jpg") != null
+                    || checkZip.GetEntry("icons/unused_custom.svg") != null
+                    || checkZip.GetEntry("icons/music.svg") != null
+                    || checkZip.GetEntry("img/unused_pic.jpg") != null)
+                {
+                    throw new InvalidOperationException("Orphaned assets were written into output .zip archive!");
+                }
+
                 var svgRepoEntry = checkZip.GetEntry("icons/svgrepo_test.svg")
                     ?? throw new InvalidOperationException("icons/svgrepo_test.svg missing from output ZIP.");
                 using var srEntry = svgRepoEntry.Open();
@@ -3727,12 +3786,66 @@ public partial class MainWindow : Window
             var (extPack, extAudit) = ThemePackageService.ExtractSingleThemeZipSafely(validZipBytes, extractedDir, builtPkg.PackageSha256);
             if (!extAudit.IsSafe
                 || extPack.Revision != 3
+                || extPack.Background.BitmapAsset != null
                 || !File.Exists(Path.Combine(extractedDir, "thumbnail.png"))
                 || !File.Exists(Path.Combine(extractedDir, "icons", "dot.svg"))
                 || !File.Exists(Path.Combine(extractedDir, "icons", "svgrepo_test.svg"))
                 || !File.Exists(Path.Combine(extractedDir, "anim", "backdrop_200858", "frames.json"))
+                || File.Exists(Path.Combine(extractedDir, "media", "tried_bg_1.jpg"))
+                || File.Exists(Path.Combine(extractedDir, "anim", "backdrop_old_140112", "frames.json"))
+                || File.Exists(Path.Combine(extractedDir, "icons", "unused_custom.svg"))
                 || File.Exists(Path.Combine(extractedDir, "packs", "other-theme", "layout.json")))
-                throw new InvalidOperationException("Safe single-theme extraction missed expected verified files or leaked packs/.");
+                throw new InvalidOperationException("Safe single-theme extraction missed expected verified files or leaked unused/packs files.");
+
+            // Verify switching Background.Type to "bitmap" ("media/tried_bg_2.jpg") excludes BOTH old animated frames AND tried_bg_1.jpg,
+            // AND USB folder export (ExportSelectedThemesToDirectory) also copies ONLY referenced assets!
+            var bmpSwitchPack = pkgPack.DeepClone();
+            bmpSwitchPack.Background.Type = "bitmap";
+            bmpSwitchPack.Background.BitmapAsset = "media/tried_bg_2.jpg"; // FramesDir still holds stale "anim/backdrop_200858" before build
+            string bmpZipPath = Path.Combine(storeTestRoot, "bmp_switch.zip");
+            var bmpBuilt = ThemePackageService.BuildSingleThemeZip(bmpSwitchPack, pkgWsDir, thumbPng, bmpZipPath);
+            if (!bmpBuilt.Audit.IncludedFiles.Any(f => f.Path == "media/tried_bg_2.jpg")
+                || bmpBuilt.Audit.IncludedFiles.Any(f => f.Path == "media/tried_bg_1.jpg" || f.Path.StartsWith("anim/", StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new InvalidOperationException("Switching Background.Type to bitmap failed to exclude old anim/framesDir or unused bitmap.");
+            }
+
+            string usbExportRoot = Path.Combine(storeTestRoot, "usb_packs_out");
+            PackWorkspaceService.CopyReferencedThemeToDirectory(bmpSwitchPack, pkgWsDir, Path.Combine(usbExportRoot, "store-test"));
+            if (!File.Exists(Path.Combine(usbExportRoot, "store-test", "media", "tried_bg_2.jpg"))
+                || !File.Exists(Path.Combine(usbExportRoot, "store-test", "icons", "dot.svg"))
+                || File.Exists(Path.Combine(usbExportRoot, "store-test", "media", "tried_bg_1.jpg"))
+                || Directory.Exists(Path.Combine(usbExportRoot, "store-test", "anim"))
+                || File.Exists(Path.Combine(usbExportRoot, "store-test", "icons", "music.svg"))
+                || File.Exists(Path.Combine(usbExportRoot, "store-test", "icons", "unused_custom.svg"))
+                || File.Exists(Path.Combine(usbExportRoot, "store-test", "img", "unused_pic.jpg")))
+            {
+                throw new InvalidOperationException("CopyReferencedThemeToDirectory (USB export) leaked unreferenced assets!");
+            }
+
+            // Verify CleanUnusedWorkspaceAssets deletes orphaned custom media/anim/img/icons while keeping active assets & built-in icons
+            string cleanableWs = Path.Combine(storeTestRoot, "cleanable_ws");
+            Directory.CreateDirectory(cleanableWs);
+            foreach (string srcFile in Directory.GetFiles(pkgWsDir, "*", SearchOption.AllDirectories))
+            {
+                string rel = Path.GetRelativePath(pkgWsDir, srcFile);
+                if (rel.StartsWith("packs" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) continue;
+                string dstFile = Path.Combine(cleanableWs, rel);
+                Directory.CreateDirectory(Path.GetDirectoryName(dstFile)!);
+                File.Copy(srcFile, dstFile, overwrite: true);
+            }
+            var (cleanedCount, _) = PackWorkspaceService.CleanUnusedWorkspaceAssets(pkgPack, cleanableWs);
+            if (cleanedCount < 6
+                || !File.Exists(Path.Combine(cleanableWs, "anim", "backdrop_200858", "f_0001.jpg"))
+                || !File.Exists(Path.Combine(cleanableWs, "icons", "dot.svg"))
+                || !File.Exists(Path.Combine(cleanableWs, "icons", "music.svg"))
+                || File.Exists(Path.Combine(cleanableWs, "media", "tried_bg_1.jpg"))
+                || Directory.Exists(Path.Combine(cleanableWs, "anim", "backdrop_old_140112"))
+                || File.Exists(Path.Combine(cleanableWs, "icons", "unused_custom.svg"))
+                || File.Exists(Path.Combine(cleanableWs, "img", "unused_pic.jpg")))
+            {
+                throw new InvalidOperationException("CleanUnusedWorkspaceAssets failed to prune unused custom assets cleanly.");
+            }
 
             // SHA mismatch must fail
             bool wrongShaBlocked = false;
@@ -3831,7 +3944,7 @@ public partial class MainWindow : Window
                 AddZipText(z, "icons/evil.json", "{\"a\":1}");
             }), storeTestRoot);
 
-            // Root actions (root_service / root_start / root_broadcast) are permitted for HMG-API + root head units
+            // Root actions (root_service / root_start / root_broadcast) are permitted for NEMESIS + root head units
             var rootActionPack = pkgPack.DeepClone();
             rootActionPack.Root.Children ??= new List<LayoutNodeModel>();
             rootActionPack.Root.Children.Add(new LayoutNodeModel
@@ -4317,12 +4430,13 @@ public partial class MainWindow : Window
             if (reloadedStaged.Name != "Imported Distinct Theme" || reloadedStaged2.Name != "Imported Distinct Theme")
                 throw new InvalidOperationException("SaveCurrentTheme overwrote staged imported theme!");
 
-            // Verify InsetsJsonConverter (scalar + 2-int) & top-level 'pages' & legacy style/action aliases
+            // Verify InsetsJsonConverter (scalar + 2-int), formatVersion 1, top-level 'pages', & all legacy background/widget/style/action aliases
             const string compatJson = """
             {
-              "formatVersion": 2,
+              "formatVersion": 1,
               "id": "compat-check",
               "name": "Compat Check",
+              "background": { "type": "bitmap", "posterAsset": "media/old_poster.jpg" },
               "pages": [
                 {
                   "id": "pg1",
@@ -4331,11 +4445,20 @@ public partial class MainWindow : Window
                   "paddingPx": 20,
                   "children": [
                     {
+                      "id": "w_clk",
+                      "type": "clock"
+                    },
+                    {
                       "id": "t1",
                       "kind": "tile",
                       "marginPx": [12, 8],
-                      "style": { "gradientEndColor": "#FF112233", "fontSizePx": 28 },
-                      "action": { "type": "launch", "pkg": "com.example.car", "cls": "com.example.car.Main" }
+                      "style": { "gradientEndColor": "#FF112233", "fontSizePx": 28, "animAsset": "anim/wave", "animFps": 12 },
+                      "action": { "type": "preset", "preset": "ev" }
+                    },
+                    {
+                      "id": "t2",
+                      "kind": "tile",
+                      "action": { "type": "broadcast", "pkg": "com.example.car", "cls": "com.example.car.Main", "action": "com.example.ACT", "extraIntKey": "k", "extraIntValue": 3 }
                     }
                   ]
                 }
@@ -4344,13 +4467,41 @@ public partial class MainWindow : Window
             """;
             var compatPack = ThemePackModel.FromJson(compatJson);
             var compatPage = compatPack.Root.Children![0];
-            var compatTile = compatPage.Children![0];
-            if (compatPack.Root.Layout != "pager"
+            var compatClock = compatPage.Children![0];
+            var compatTile = compatPage.Children![1];
+            var compatTile2 = compatPage.Children![2];
+            if (compatPack.FormatVersion != 1
+                || compatPack.Background.BitmapAsset != "media/old_poster.jpg"
+                || compatPack.Root.Layout != "pager"
+                || compatClock.Kind != "clock"
                 || compatPage.PaddingPx is not { Length: 4 } || compatPage.PaddingPx[0] != 20 || compatPage.PaddingPx[3] != 20
                 || compatTile.MarginPx is not { Length: 4 } || compatTile.MarginPx[0] != 12 || compatTile.MarginPx[1] != 8 || compatTile.MarginPx[2] != 12
                 || compatTile.Style?.BgEndColor != "#FF112233" || compatTile.Style?.TitleSizePx != 28
-                || compatTile.Action?.Package != "com.example.car" || compatTile.Action?.Class != "com.example.car.Main")
-                throw new InvalidOperationException("ThemePackModel legacy/v2 schema compatibility normalization failed.");
+                || compatTile.Style?.BgAnimAsset != "anim/wave" || compatTile.Style?.BgAnimFps != 12
+                || compatTile.Action?.Cmd != "ev"
+                || compatTile2.Action?.Package != "com.example.car" || compatTile2.Action?.Class != "com.example.car.Main"
+                || compatTile2.Action?.IntentAction != "com.example.ACT"
+                || compatTile2.Action?.ExtraKey != "k" || compatTile2.Action?.ExtraType != "int" || compatTile2.Action?.ExtraVal != "3")
+                throw new InvalidOperationException("ThemePackModel legacy v0.1-v0.4.x schema compatibility normalization failed.");
+
+            // Verify Studio also still safely imports older pre-v0.5.0 theme .zip files that contain extra unreferenced assets
+            byte[] legacyZipBytes = BuildCustomZip(z =>
+            {
+                AddZipText(z, "layout.json", compatJson);
+                var p = z.CreateEntry("media/old_poster.jpg");
+                using (var s = p.Open()) s.Write(validJpegBytes, 0, validJpegBytes.Length);
+                var u = z.CreateEntry("media/unused_old.jpg");
+                using (var s = u.Open()) s.Write(validJpegBytes, 0, validJpegBytes.Length);
+                AddZipText(z, "icons/music.svg", "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><circle cx=\"5\" cy=\"5\" r=\"2\"/></svg>");
+            });
+            string legacyExtractDir = Path.Combine(storeTestRoot, "legacy_zip_import");
+            var (legacyImportedPack, legacyAudit) = ThemePackageService.ExtractSingleThemeZipSafely(legacyZipBytes, legacyExtractDir);
+            if (!legacyAudit.IsSafe
+                || legacyImportedPack.Background.BitmapAsset != "media/old_poster.jpg"
+                || !File.Exists(Path.Combine(legacyExtractDir, "media", "old_poster.jpg"))
+                || !File.Exists(Path.Combine(legacyExtractDir, "media", "unused_old.jpg"))
+                || !File.Exists(Path.Combine(legacyExtractDir, "icons", "music.svg")))
+                throw new InvalidOperationException("Legacy pre-v0.5.0 .zip theme import failed.");
 
             // Verify AI Theme Context Builder stays 100% synchronized with PresetCatalog & ThemePackageService validator
             string aiPrompt = AiThemeContextBuilder.BuildPrompt(currentPack, includeActiveThemeJson: true);

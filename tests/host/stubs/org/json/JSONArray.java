@@ -1,6 +1,5 @@
 package org.json;
 
-import hmgapi.engine.Json;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -13,11 +12,7 @@ public class JSONArray {
     }
 
     public JSONArray(String json) {
-        Object p = Json.parse(json);
-        if (!(p instanceof List)) throw new IllegalArgumentException("Not a JSON array");
-        @SuppressWarnings("unchecked")
-        List<Object> l = (List<Object>) p;
-        this.list = l;
+        this.list = SimpleJsonParser.parseArray(json);
     }
 
     JSONArray(List<Object> list) {

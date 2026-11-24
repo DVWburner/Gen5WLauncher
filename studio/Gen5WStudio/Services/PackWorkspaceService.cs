@@ -48,7 +48,9 @@ public sealed class PackWorkspaceService
         fontCache.Clear();
     }
 
-    public string? LocateDefaultPackDir()
+    public string? LocateDefaultPackDir() => LocateDefaultPackDirStatic();
+
+    public static string? LocateDefaultPackDirStatic()
     {
         string? cursor = AppContext.BaseDirectory;
         for (int i = 0; i < 6 && !string.IsNullOrEmpty(cursor); i++)
@@ -60,10 +62,29 @@ public sealed class PackWorkspaceService
             }
             cursor = Directory.GetParent(cursor)?.FullName;
         }
-        return EnsureEmbeddedDefaultPackExtracted();
+        return EnsureEmbeddedDefaultPackExtractedStatic();
     }
 
-    private string? EnsureEmbeddedDefaultPackExtracted()
+    public static byte[]? TryReadBuiltInAssetBytes(string? relativeRef)
+    {
+        string? clean = ThemePackageService.NormalizeRelativeAssetRef(relativeRef);
+        if (clean == null) return null;
+        if (!PresetCatalog.BuiltInIcons.Contains(clean, StringComparer.OrdinalIgnoreCase))
+            return null;
+
+        string? defaultDir = LocateDefaultPackDirStatic();
+        if (!string.IsNullOrEmpty(defaultDir))
+        {
+            string full = Path.Combine(defaultDir, clean.Replace('/', Path.DirectorySeparatorChar));
+            if (File.Exists(full))
+                return File.ReadAllBytes(full);
+        }
+        return null;
+    }
+
+    private string? EnsureEmbeddedDefaultPackExtracted() => EnsureEmbeddedDefaultPackExtractedStatic();
+
+    private static string? EnsureEmbeddedDefaultPackExtractedStatic()
     {
         try
         {
@@ -74,7 +95,7 @@ public sealed class PackWorkspaceService
                 .ToArray();
             if (names.Length == 0) return null;
 
-            string appDataRoot = Path.GetDirectoryName(PacksRootDir) ?? PacksRootDir;
+            string appDataRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Gen5WStudio");
             string cacheDir = Path.Combine(appDataRoot, "bundled_default");
             Directory.CreateDirectory(cacheDir);
 
@@ -418,12 +439,130 @@ public sealed class PackWorkspaceService
     public void SaveToDirectory(ThemePackModel pack, string targetDir)
     {
         Directory.CreateDirectory(targetDir);
-        if (!string.Equals(Path.GetFullPath(targetDir), Path.GetFullPath(WorkspaceDir), StringComparison.OrdinalIgnoreCase))
+        if (!string.IsNullOrWhiteSpace(WorkspaceDir)
+            && !string.Equals(Path.GetFullPath(targetDir), Path.GetFullPath(WorkspaceDir), StringComparison.OrdinalIgnoreCase))
         {
-            CopyDirectory(WorkspaceDir, targetDir, overwrite: true);
+            CopyReferencedThemeToDirectory(pack, WorkspaceDir, targetDir);
+            return;
         }
-        string normalizedJson = pack.ToJsonString();
-        File.WriteAllText(Path.Combine(targetDir, "layout.json"), normalizedJson, new System.Text.UTF8Encoding(false));
+
+        var clone = pack.DeepClone();
+        ThemePackageService.PruneInactiveFieldsForRelease(clone);
+        File.WriteAllText(Path.Combine(targetDir, "layout.json"), clone.ToJsonString(), new System.Text.UTF8Encoding(false));
+    }
+
+    /// <summary>
+    /// Copies ONLY <c>layout.json</c>, optional root thumbnail, and the exact asset files referenced
+    /// by <paramref name="sourcePack"/> from <paramref name="srcThemeDir"/> into <paramref name="targetDir"/>.
+    /// </summary>
+    public static void CopyReferencedThemeToDirectory(ThemePackModel sourcePack, string srcThemeDir, string targetDir)
+    {
+        var exportPack = sourcePack.DeepClone();
+        ThemePackageService.PruneInactiveFieldsForRelease(exportPack);
+
+        string srcFull = Path.GetFullPath(srcThemeDir);
+        var (refFiles, refDirs) = ThemePackageService.CollectReferencedAssets(exportPack, srcFull);
+
+        Directory.CreateDirectory(targetDir);
+        var copiedRels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (string thumbName in new[] { "thumbnail.png", "thumbnail.jpg" })
+        {
+            string srcThumb = Path.Combine(srcFull, thumbName);
+            if (File.Exists(srcThumb))
+            {
+                File.Copy(srcThumb, Path.Combine(targetDir, thumbName), overwrite: true);
+                break;
+            }
+        }
+
+        foreach (string sub in new[] { "icons", "img", "media", "anim", "fonts" })
+        {
+            string subDir = Path.Combine(srcFull, sub);
+            if (!Directory.Exists(subDir)) continue;
+            foreach (string file in Directory.EnumerateFiles(subDir, "*", SearchOption.AllDirectories))
+            {
+                string rel = Path.GetRelativePath(srcFull, file).Replace('\\', '/');
+                if (!ThemePackageService.IsAssetFileReferenced(rel, refFiles, refDirs))
+                    continue;
+                string dstFile = Path.Combine(targetDir, rel.Replace('/', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(Path.GetDirectoryName(dstFile)!);
+                File.Copy(file, dstFile, overwrite: true);
+                copiedRels.Add(rel);
+            }
+        }
+
+        foreach (string expectedRel in refFiles)
+        {
+            if (copiedRels.Contains(expectedRel)) continue;
+            byte[]? builtInBytes = TryReadBuiltInAssetBytes(expectedRel);
+            if (builtInBytes != null && builtInBytes.Length > 0)
+            {
+                string dstFile = Path.Combine(targetDir, expectedRel.Replace('/', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(Path.GetDirectoryName(dstFile)!);
+                File.WriteAllBytes(dstFile, builtInBytes);
+            }
+        }
+
+        File.WriteAllText(Path.Combine(targetDir, "layout.json"), exportPack.ToJsonString(), new System.Text.UTF8Encoding(false));
+    }
+
+    /// <summary>
+    /// Deletes unreferenced custom workspace assets (<c>media/</c>, <c>img/</c>, <c>anim/</c>, <c>fonts/</c>,
+    /// and non-built-in <c>icons/</c>) from <paramref name="targetWorkspaceDir"/> (or active <see cref="WorkspaceDir"/>).
+    /// </summary>
+    public static (int DeletedFiles, long FreedBytes) CleanUnusedWorkspaceAssets(ThemePackModel pack, string targetWorkspaceDir)
+    {
+        if (pack == null || string.IsNullOrWhiteSpace(targetWorkspaceDir) || !Directory.Exists(targetWorkspaceDir))
+            return (0, 0);
+
+        string wsFull = Path.GetFullPath(targetWorkspaceDir);
+        var (refFiles, refDirs) = ThemePackageService.CollectReferencedAssets(pack, wsFull);
+        var builtInSet = new HashSet<string>(PresetCatalog.BuiltInIcons, StringComparer.OrdinalIgnoreCase);
+
+        int deletedCount = 0;
+        long freedBytes = 0;
+
+        foreach (string sub in new[] { "icons", "img", "media", "anim", "fonts" })
+        {
+            string subDir = Path.Combine(wsFull, sub);
+            if (!Directory.Exists(subDir)) continue;
+
+            foreach (string file in Directory.GetFiles(subDir, "*", SearchOption.AllDirectories))
+            {
+                string rel = Path.GetRelativePath(wsFull, file).Replace('\\', '/');
+                if (builtInSet.Contains(rel))
+                    continue;
+                if (ThemePackageService.IsAssetFileReferenced(rel, refFiles, refDirs))
+                    continue;
+
+                try
+                {
+                    long len = new FileInfo(file).Length;
+                    File.Delete(file);
+                    deletedCount++;
+                    freedBytes += len;
+                }
+                catch
+                {
+                    // Ignore locked file
+                }
+            }
+
+            // Remove empty nested directories (e.g. old anim/backdrop_* folders)
+            foreach (string dir in Directory.GetDirectories(subDir, "*", SearchOption.AllDirectories)
+                         .OrderByDescending(d => d.Length))
+            {
+                try
+                {
+                    if (!Directory.EnumerateFileSystemEntries(dir).Any())
+                        Directory.Delete(dir, recursive: false);
+                }
+                catch { }
+            }
+        }
+
+        return (deletedCount, freedBytes);
     }
 
     public void ResetWorkspace()
@@ -494,7 +633,12 @@ public sealed class PackWorkspaceService
             if (!string.Equals(Path.GetFullPath(entry.Directory), Path.GetFullPath(dst), StringComparison.OrdinalIgnoreCase))
             {
                 if (Directory.Exists(dst)) Directory.Delete(dst, recursive: true);
-                CopyDirectory(entry.Directory, dst, overwrite: true);
+                bool isActive = !string.IsNullOrWhiteSpace(WorkspaceDir)
+                                && string.Equals(Path.GetFullPath(entry.Directory), Path.GetFullPath(WorkspaceDir), StringComparison.OrdinalIgnoreCase);
+                ThemePackModel entryModel = isActive
+                    ? activePack
+                    : ThemePackModel.FromJson(File.ReadAllText(Path.Combine(entry.Directory, "layout.json")));
+                CopyReferencedThemeToDirectory(entryModel, entry.Directory, dst);
             }
             count++;
         }

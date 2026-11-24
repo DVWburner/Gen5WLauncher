@@ -7,20 +7,20 @@ import android.os.RemoteException;
 
 import com.gen5w.launcher.ipc.TemperatureNormalizer;
 
-import hmgapi.client.HmgApi;
-
 import java.io.File;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Clean-room direct Binder bridge running inside HomeSwitcher (root dalvikvm/app_process).
  * Resolves AIDL transaction codes at runtime via Stub.TRANSACTION_* fields so it adapts
- * cleanly across Gen5W firmware builds without hardcoded transaction numbers.
+ * cleanly across Gen5W firmware builds without hardcoded transaction numbers or external hooks.
  */
 final class DirectCarServiceBridge {
     private static final String SVC_HSCAN = "tm_hscan_service";
@@ -38,6 +38,12 @@ final class DirectCarServiceBridge {
     private static final String SVC_HEV = "com.hkmc.micom.hev";
     private static final String IFACE_HEV = "com.hkmc.hev.IHEVService";
 
+    private static final String SVC_CLUSTER = "com.hkmc.micom.cluster";
+    private static final String IFACE_CLUSTER = "com.hkmc.cluster.IClusterService";
+    private static final String IFACE_CLUSTER_LISTENER = "com.hkmc.cluster.INavigationClusterListener";
+
+    private static final String IFACE_REGULATION = "com.hkmc.regulation.IRegulationManager";
+
     private static final String SVC_PGS = "com.hkmc.pgs";
     private static final String IFACE_PGS = "com.hkmc.pgs.IPgsService";
 
@@ -54,8 +60,30 @@ final class DirectCarServiceBridge {
     private static final String SVC_AUDIO = "com.hkmc.micom.audiosetup";
     private static final String IFACE_AUDIO = "com.hkmc.media.IMicomAudioService";
 
+    // HEVManager$HEVFlag constants (verified against Gen5W framework & HKMC_TAppEV3)
+    private static final int HEV_EV_RDY = 0x01;
+    private static final int HEV_DISPLAY_SOC = 0x19;
+    private static final int HEV_ODOMETER = 0x1F;
+    private static final int HEV_PWR_OTHER_ECU = 0x24;
+    private static final int HEV_MOTER_PWR_AVN = 0x25;
+    private static final int HEV_PWR_E_COMPRESSOR = 0x2A;
+    private static final int HEV_DATC_BATTERYCOMPPWRCON_W = 0x33;
+    private static final int HEV_XEV_BATHEATPWRMONCON_W = 0x43;
+    private static final int HEV_MCU_MG1PWRAVNKWVAL = 0x45;
+    private static final int HEV_MCU_MG2PWRAVNKWVAL = 0x46;
+    private static final int HEV_VCMS_V2LMODE = 0x4A;
+    private static final int HEV_DATC_CLMTPWRCNSMPTN_W = 0x4F;
+    private static final int HEV_EV_BATTERYCONDITIONING = 0x5E;
+    private static final int HEV_BMS_BATTCONDFAILPOPUP = 0x73;
+
     private static final int MISSING_TX = -2;
     private static final int MAX_AUDIO_LEVEL = 45;
+    private static final long CHARGE_DOOR_GAP_MS = 5000L;
+    private static final long COND_KEEPALIVE_MS = 5000L;
+    private static final long CLUSTER_TEMP_POLL_MS = 5000L;
+    private static final int COND_ROUTE_KM = 9;
+    private static final int COND_ROUTE_MIN = 18;
+    private static final int FB_CLUSTER_ON_BATT_INFO = 2;
 
     // Fallback IBCMListener transaction IDs from Gen5W framework (overridden by runtime reflection when present)
     private static final int FB_BCM_ON_DOOR_ALL = 2;
@@ -105,7 +133,30 @@ final class DirectCarServiceBridge {
     private volatile Boolean lastKnownCelsius = null;
     private volatile boolean lastRearAutoState = false;
     private volatile Integer cachedHevEvRdyFlag = null;
+    private volatile int cachedCanDbGen = -1;
+    private volatile String cachedRegulationSvcName = null;
+    private volatile String cachedProductModel = null;
     private volatile long lastVrSignalsEnableMs = 0L;
+    private volatile long lastChargeDoorMs = 0L;
+    private volatile int cachedTpmsOffset = -1;
+    private final int[] lastValidTpmsPsi = new int[4]; // FL, FR, RL, RR
+
+    // Cluster listener state (min pack temp °C from onHandleBatteryInfoResp)
+    private IBinder registeredClusterService;
+    private IBinder clusterListenerBinder;
+    private volatile int txClusterBattInfo = -1;
+    private volatile int clusterPackTempMinC = Integer.MIN_VALUE;
+    private volatile long clusterPackTempAtMs = 0L;
+    private volatile long lastClusterReqMs = 0L;
+
+    // Direct EV battery conditioning state machine (replicates Launchpad / HMG-API protocol)
+    private final Object condLock = new Object();
+    private volatile boolean conditioningHeld = false;
+    private volatile int conditioningKm = COND_ROUTE_KM;
+    private volatile int conditioningMin = COND_ROUTE_MIN;
+    private volatile long conditioningStartedAtMs = 0L;
+    private volatile long conditioningKeptAtMs = 0L;
+    private volatile String conditioningState = "off";
 
     // Cached BCM & DATC listener state (updated asynchronously on change & on initial registration)
     private IBinder registeredBcmService;
@@ -234,28 +285,60 @@ final class DirectCarServiceBridge {
         if (muted != null) {
             out.put("audio.muted", muted != 0 ? "1" : "0");
         }
+        String regSvc = resolveRegulationServiceName();
+        if (regSvc != null) {
+            Integer reg = callIntNoArg(regSvc, IFACE_REGULATION, "getStatus", false);
+            if (reg != null && (reg == 0 || reg == 1)) {
+                out.put("driving.restricted", reg == 1 ? "1" : "0");
+            }
+        }
+        out.put("conditioning.state", conditioningState);
     }
 
     void pollExtended(Map<String, String> out) {
+        pollExtended(out, Collections.<String>emptySet());
+    }
+
+    void pollExtended(Map<String, String> out, Set<String> demandKeys) {
         ensureBcmListenerRegistered();
         ensureDatcListenerRegistered();
+        ensureClusterListenerRegistered();
 
-        // HSCAN: EV Range, SoC, Odometer, Charging, Tyres, Consumption
+        // HSCAN & HEV: EV Range, SoC, Odometer, Charging, SOH, 12V Battery
         Integer rangeKm = callIntArgByte(SVC_HSCAN, IFACE_HSCAN, "ableDriveDistance", (byte) 0, true);
         if (rangeKm != null && rangeKm >= 0 && rangeKm < 2500) {
             out.put("hv.range", String.valueOf(rangeKm));
         }
-        Float soc = callNumericNoArgAsFloat(SVC_HSCAN, IFACE_HSCAN, "remainBatteryPercentage", true);
-        if (soc != null && !Float.isNaN(soc) && soc >= 0f && soc <= 100f) {
-            out.put("hv.soc", formatCompactFloat(soc));
+        Integer halfSoc = getHevStatusRaw(HEV_DISPLAY_SOC);
+        if (halfSoc != null && halfSoc >= 0 && halfSoc <= 200) {
+            out.put("hv.soc", formatCompactFloat(halfSoc / 2.0f));
+        } else {
+            Float soc = callNumericNoArgAsFloat(SVC_HSCAN, IFACE_HSCAN, "remainBatteryPercentage", true);
+            if (soc != null && !Float.isNaN(soc) && soc >= 0f && soc <= 100f) {
+                out.put("hv.soc", formatCompactFloat(soc));
+            }
         }
-        Float odo = callFloatArgByte(SVC_HSCAN, IFACE_HSCAN, "getOdometer", (byte) 0, true);
-        if (odo != null && !Float.isNaN(odo) && odo > 0f) {
-            out.put("odometer", formatCompactFloat(odo));
+        Integer hevOdoTenths = getHevStatusRaw(HEV_ODOMETER);
+        if (hevOdoTenths != null && hevOdoTenths > 0 && hevOdoTenths != 0xFFFF && hevOdoTenths != 0xFFFFFF) {
+            out.put("odometer", formatCompactFloat(hevOdoTenths / 10.0f));
+        } else {
+            Float odo = callFloatArgByte(SVC_HSCAN, IFACE_HSCAN, "getOdometer", (byte) 0, true);
+            if (odo != null && !Float.isNaN(odo) && odo > 0f) {
+                out.put("odometer", formatCompactFloat(odo));
+            }
         }
         Integer aux = callIntNoArg(SVC_HSCAN, IFACE_HSCAN, "getBatSoc", true);
         if (aux != null && aux > 0 && aux <= 100) {
             out.put("battery12v.soc", String.valueOf(aux));
+        }
+        putUnsignedByteFlag(out, "battery12v.sensor_state", callUnsignedByteNoArg(SVC_HSCAN, IFACE_HSCAN, "getBATSNSRState", true));
+        putUnsignedByteFlag(out, "battery12v.sensor_invalid", callUnsignedByteNoArg(SVC_HSCAN, IFACE_HSCAN, "getBATSNSRInvalid", true));
+        putUnsignedByteFlag(out, "battery12v.sensor_error", callUnsignedByteNoArg(SVC_HSCAN, IFACE_HSCAN, "getBATSNSRError", true));
+        putUnsignedByteFlag(out, "battery12v.saver", callUnsignedByteNoArg(SVC_HSCAN, IFACE_HSCAN, "get_BAT_AuxBattOpt", true));
+
+        Integer soh = callIntNoArg(SVC_HSCAN, IFACE_HSCAN, "getXEV_Bms_GDS_SOH", true);
+        if (soh != null && soh >= 0 && soh <= 100) {
+            out.put("hv.health", String.valueOf(soh));
         }
         Integer chg = callIntNoArg(SVC_HSCAN, IFACE_HSCAN, "getChargingStatus", true);
         if (chg != null && chg >= 0) {
@@ -265,29 +348,43 @@ final class DirectCarServiceBridge {
         if (chgMin != null && chgMin >= 0 && chgMin < 10000) {
             out.put("charging.remain_min", String.valueOf(chgMin));
         }
-        putByteFlag(out, "tyre.fl_status", callIntNoArg(SVC_HSCAN, IFACE_HSCAN, "getFrontLeftTirePressureStatus", true));
-        putByteFlag(out, "tyre.fr_status", callIntNoArg(SVC_HSCAN, IFACE_HSCAN, "getFrontRightTirePressureStatus", true));
-        putByteFlag(out, "tyre.rl_status", callIntNoArg(SVC_HSCAN, IFACE_HSCAN, "getRearLeftTirePressureStatus", true));
-        putByteFlag(out, "tyre.rr_status", callIntNoArg(SVC_HSCAN, IFACE_HSCAN, "getRearRightTirePressureStatus", true));
+        Integer conn = callIntNoArg(SVC_HSCAN, IFACE_HSCAN, "getConnectStatus", true);
+        if (conn != null && conn >= 0 && conn <= 10) {
+            out.put("hv.plug_state", String.valueOf(conn));
+        }
+        Integer v2l = getHevStatusRaw(HEV_VCMS_V2LMODE);
+        if (v2l != null && v2l >= 0 && v2l != 0xFF && v2l != 0xFFFF) {
+            out.put("hv.v2l_active", v2l == 1 ? "1" : "0");
+        }
+        Integer condSetting = getHevStatusRaw(HEV_EV_BATTERYCONDITIONING);
+        if (condSetting != null && condSetting >= 0 && condSetting != 0xFF && condSetting != 0xFFFF) {
+            out.put("hv.conditioning", String.valueOf(condSetting));
+        }
+        Integer condFail = getHevStatusRaw(HEV_BMS_BATTCONDFAILPOPUP);
+        if (condFail != null && condFail != 0xFFFF) {
+            out.put("hv.conditioning_failure", String.valueOf(condFail));
+        }
 
-        Float drvKw = callNumericNoArgAsFloat(SVC_HSCAN, IFACE_HSCAN, "driveLineEleConsum", true);
-        if (drvKw != null && !Float.isNaN(drvKw) && drvKw >= -300f && drvKw <= 600f) {
-            out.put("energy.drivetrain_kw", formatCompactFloat(drvKw));
+        // Cluster battery temperature (requested on demand or during conditioning every 5s)
+        long nowMs = android.os.SystemClock.elapsedRealtime();
+        boolean needTemp = conditioningHeld
+                || demandKeys == null
+                || demandKeys.contains("hv.battery_temp_min")
+                || demandKeys.contains("hv.battery_temp_min_f")
+                || demandKeys.contains("hv.battery_temp_min_c");
+        if (needTemp && registeredClusterService != null && (nowMs - lastClusterReqMs) >= CLUSTER_TEMP_POLL_MS) {
+            lastClusterReqMs = nowMs;
+            callVoidNoArg(SVC_CLUSTER, IFACE_CLUSTER, "requestBatteryInfoReq");
         }
-        Float acKw = callNumericNoArgAsFloat(SVC_HSCAN, IFACE_HSCAN, "airConEleConsum", true);
-        if (acKw != null && !Float.isNaN(acKw) && acKw >= 0f && acKw <= 50000f) {
-            out.put("energy.climate_kw", acKw > 100f ? String.format(Locale.US, "%.2f", acKw / 1000f) : formatCompactFloat(acKw));
+        if (clusterPackTempMinC >= -40 && clusterPackTempMinC <= 60) {
+            out.put("hv.battery_temp_min", String.valueOf(clusterPackTempMinC));
         }
-        Float elecW = callNumericNoArgAsFloat(SVC_HSCAN, IFACE_HSCAN, "electricConsum", true);
-        if (elecW != null && !Float.isNaN(elecW) && elecW >= 0f && elecW <= 50000f) {
-            out.put("energy.electronics_w", String.valueOf(Math.round(elecW)));
-        }
-        Float heatKw = callNumericNoArgAsFloat(SVC_HSCAN, IFACE_HSCAN, "heaterEleConsum", true);
-        if (heatKw != null && !Float.isNaN(heatKw) && heatKw >= 0f && heatKw <= 50000f) {
-            float normHeatKw = heatKw > 100f ? (heatKw / 1000f) : heatKw;
-            lastHeaterKw = normHeatKw;
-            out.put("energy.care_kw", heatKw > 100f ? String.format(Locale.US, "%.2f", normHeatKw) : formatCompactFloat(heatKw));
-        }
+
+        // Live Tire Pressure (PSI from CAN-FD 0x03A1 + status flags from HSCAN)
+        pollTpms(out);
+
+        // Live EV Power Breakdown (OEM HKMC_TAppEV3 formulas via IHEVService with Gen1 HSCAN fallback)
+        pollEvPower(out);
 
         Integer guide = callIntNoArg(SVC_PGS, IFACE_PGS, "getRvmGuideLineState", false);
         if (guide != null && (guide == 1 || guide == 2)) {
@@ -299,6 +396,140 @@ final class DirectCarServiceBridge {
 
         // BCM & USM: Doors, Locks, Trunk/Hatch, Hood, Seats, Windows, Sunroof, Conditioning indicator, EPB
         pollBodyAndSeats(out);
+
+        // Conditioning keepalive & state watcher
+        tickConditioning(out);
+    }
+
+    private void pollEvPower(Map<String, String> out) {
+        if (cachedCanDbGen < 0) {
+            Integer gen = callIntNoArg(SVC_HEV, IFACE_HEV, "getCanDBGenerationInfo", false);
+            if (gen != null && gen >= 0) {
+                cachedCanDbGen = gen.intValue();
+            }
+        }
+        int gen = cachedCanDbGen >= 0 ? cachedCanDbGen : 2;
+        if (gen >= 2) {
+            Integer mg1 = getHevStatusRaw(HEV_MCU_MG1PWRAVNKWVAL);
+            Integer mg2 = getHevStatusRaw(HEV_MCU_MG2PWRAVNKWVAL);
+            boolean mg1Valid = mg1 != null && mg1 >= 0 && mg1 <= 0x3FF;
+            boolean mg2Valid = mg2 != null && mg2 >= 0 && mg2 <= 0x3FF;
+            if (mg1Valid || mg2Valid) {
+                int kwSum = (mg1Valid ? signExtend10(mg1) : 0) + (mg2Valid ? signExtend10(mg2) : 0);
+                out.put("energy.drivetrain_kw", String.valueOf(kwSum));
+            }
+            Integer clmt = getHevStatusRaw(HEV_DATC_CLMTPWRCNSMPTN_W);
+            if (clmt != null && clmt >= 0 && clmt < 0xFFFF) {
+                out.put("energy.climate_kw", formatPowerKw((clmt * 2) / 100.0f));
+            }
+            Integer other = getHevStatusRaw(HEV_PWR_OTHER_ECU);
+            if (other != null && other >= 0 && other < 0xFF) {
+                out.put("energy.electronics_w", String.valueOf(other * 10));
+            }
+            Integer batComp = getHevStatusRaw(HEV_DATC_BATTERYCOMPPWRCON_W);
+            Integer batHeat = getHevStatusRaw(HEV_XEV_BATHEATPWRMONCON_W);
+            boolean compValid = batComp != null && batComp >= 0 && batComp < 0xFFFF;
+            boolean heatValid = batHeat != null && batHeat >= 0 && batHeat < 0xFF;
+            if (compValid || heatValid) {
+                float careKw = ((compValid ? batComp : 0) * 2 + (heatValid ? batHeat : 0) * 10) / 100.0f;
+                lastHeaterKw = careKw;
+                out.put("energy.care_kw", formatPowerKw(careKw));
+            }
+            return;
+        }
+
+        // Gen1 EVs (Kona EV / Niro EV / Ioniq Electric): use HEV flags + HSCAN fallbacks
+        Integer mot = getHevStatusRaw(HEV_MOTER_PWR_AVN);
+        if (mot != null && mot >= 0 && mot <= 0x3FF) {
+            out.put("energy.drivetrain_kw", String.valueOf(signExtend10(mot)));
+        } else {
+            Float drvKw = callNumericNoArgAsFloat(SVC_HSCAN, IFACE_HSCAN, "driveLineEleConsum", true);
+            if (drvKw != null && !Float.isNaN(drvKw) && drvKw >= -300f && drvKw <= 600f) {
+                out.put("energy.drivetrain_kw", formatCompactFloat(drvKw));
+            }
+        }
+        Integer other = getHevStatusRaw(HEV_PWR_OTHER_ECU);
+        if (other != null && other >= 0 && other < 0xFF) {
+            out.put("energy.electronics_w", String.valueOf(other * 10));
+        } else {
+            Float elecW = callNumericNoArgAsFloat(SVC_HSCAN, IFACE_HSCAN, "electricConsum", true);
+            if (elecW != null && !Float.isNaN(elecW) && elecW >= 0f && elecW <= 50000f) {
+                out.put("energy.electronics_w", String.valueOf(Math.round(elecW)));
+            }
+        }
+        Float acKw = callNumericNoArgAsFloat(SVC_HSCAN, IFACE_HSCAN, "airConEleConsum", true);
+        if (acKw != null && !Float.isNaN(acKw) && acKw >= 0f && acKw <= 50000f) {
+            out.put("energy.climate_kw", acKw > 100f ? formatPowerKw(acKw / 1000f) : formatCompactFloat(acKw));
+        }
+        Integer batComp = getHevStatusRaw(HEV_DATC_BATTERYCOMPPWRCON_W);
+        if (batComp != null && batComp >= 0 && batComp < 0xFFFF) {
+            float careKw = (batComp * 4) / 100.0f;
+            lastHeaterKw = careKw;
+            out.put("energy.care_kw", formatPowerKw(careKw));
+        } else {
+            Float heatKw = callNumericNoArgAsFloat(SVC_HSCAN, IFACE_HSCAN, "heaterEleConsum", true);
+            if (heatKw != null && !Float.isNaN(heatKw) && heatKw >= 0f && heatKw <= 50000f) {
+                float normHeatKw = heatKw > 100f ? (heatKw / 1000f) : heatKw;
+                lastHeaterKw = normHeatKw;
+                out.put("energy.care_kw", heatKw > 100f ? formatPowerKw(normHeatKw) : formatCompactFloat(heatKw));
+            }
+        }
+    }
+
+    private void pollTpms(Map<String, String> out) {
+        Integer stFl = callUnsignedByteNoArg(SVC_HSCAN, IFACE_HSCAN, "getFrontLeftTirePressureStatus", true);
+        Integer stFr = callUnsignedByteNoArg(SVC_HSCAN, IFACE_HSCAN, "getFrontRightTirePressureStatus", true);
+        Integer stRl = callUnsignedByteNoArg(SVC_HSCAN, IFACE_HSCAN, "getRearLeftTirePressureStatus", true);
+        Integer stRr = callUnsignedByteNoArg(SVC_HSCAN, IFACE_HSCAN, "getRearRightTirePressureStatus", true);
+        putTpmsStatusFlag(out, "tyre.fl_status", stFl);
+        putTpmsStatusFlag(out, "tyre.fr_status", stFr);
+        putTpmsStatusFlag(out, "tyre.rl_status", stRl);
+        putTpmsStatusFlag(out, "tyre.rr_status", stRr);
+
+        // Live CAN-FD TPMS_01_200ms_1 (canId 0x03A1) inside ITM_HSCANService.getOneTimeServiceData():
+        // Record layout = [canIdHi, canIdLo, raw0..raw7] (10 bytes per CAN-FD entry).
+        // raw[3] (buf+5) = warning bits; raw[4..7] (buf+6..9) = FR, FL, RR, RL PSI (1 psi/LSB, 0 when sleeping).
+        byte[] buf = callByteArrayNoArg(SVC_HSCAN, IFACE_HSCAN, "getOneTimeServiceData", true);
+        if (buf != null && buf.length >= 10 && (buf.length % 10) == 0) {
+            int pos = cachedTpmsOffset;
+            if (pos < 0 || pos + 10 > buf.length || buf[pos] != 0x03 || (buf[pos + 1] & 0xFF) != 0xA1) {
+                pos = -1;
+                for (int i = 0; i + 10 <= buf.length; i += 10) {
+                    if (buf[i] == 0x03 && (buf[i + 1] & 0xFF) == 0xA1) {
+                        pos = i;
+                        break;
+                    }
+                }
+                cachedTpmsOffset = pos;
+            }
+            if (pos >= 0) {
+                int statusByte = buf[pos + 5] & 0xFF;
+                if (statusByte != 0xFF) {
+                    if (stFl == null) putTpmsStatusFlag(out, "tyre.fl_status", Integer.valueOf(statusByte & 0x03));
+                    if (stFr == null) putTpmsStatusFlag(out, "tyre.fr_status", Integer.valueOf((statusByte >> 2) & 0x03));
+                    if (stRl == null) putTpmsStatusFlag(out, "tyre.rl_status", Integer.valueOf((statusByte >> 4) & 0x03));
+                    if (stRr == null) putTpmsStatusFlag(out, "tyre.rr_status", Integer.valueOf((statusByte >> 6) & 0x03));
+                }
+                int frPsi = buf[pos + 6] & 0xFF;
+                int flPsi = buf[pos + 7] & 0xFF;
+                int rrPsi = buf[pos + 8] & 0xFF;
+                int rlPsi = buf[pos + 9] & 0xFF;
+                updateCachedTpmsPsi(0, flPsi);
+                updateCachedTpmsPsi(1, frPsi);
+                updateCachedTpmsPsi(2, rlPsi);
+                updateCachedTpmsPsi(3, rrPsi);
+            }
+        }
+        if (lastValidTpmsPsi[0] > 0) out.put("tyre.fl_psi", String.valueOf(lastValidTpmsPsi[0]));
+        if (lastValidTpmsPsi[1] > 0) out.put("tyre.fr_psi", String.valueOf(lastValidTpmsPsi[1]));
+        if (lastValidTpmsPsi[2] > 0) out.put("tyre.rl_psi", String.valueOf(lastValidTpmsPsi[2]));
+        if (lastValidTpmsPsi[3] > 0) out.put("tyre.rr_psi", String.valueOf(lastValidTpmsPsi[3]));
+    }
+
+    private void updateCachedTpmsPsi(int wheelIdx, int psi) {
+        if (psi >= 1 && psi <= 120) {
+            lastValidTpmsPsi[wheelIdx] = psi;
+        }
     }
 
     private void pollDatcClimate(Map<String, String> out) {
@@ -938,11 +1169,7 @@ final class DirectCarServiceBridge {
         }
         if ("wheel_heat_toggle".equals(cmd)) {
             boolean nextOff = "1".equals(snap.get("wheel_heat"));
-            CommandReply hmg = tryHmgCommandChecked("wheel_heat", nextOff ? "off" : "on");
-            if (hmg != null) {
-                if (hmg.ok) bcmWheelHeat = nextOff ? 0 : 1;
-                return hmg.ok ? new CommandReply(true, "Steering Wheel Heat " + (nextOff ? "OFF" : "ON")) : hmg;
-            }
+            ensureVrSignalsEnabled();
             boolean ok = callIntWrite1(SVC_VR, IFACE_VR, "set_StrgWhlHeated_Cmd_AVN", nextOff ? 0 : 1);
             if (ok) bcmWheelHeat = nextOff ? 0 : 1;
             return new CommandReply(ok, ok ? ("Steering Wheel Heat " + (nextOff ? "OFF" : "ON")) : "Wheel heat command failed");
@@ -1002,23 +1229,19 @@ final class DirectCarServiceBridge {
             return new CommandReply(ok, ok ? (muted ? "Audio Unmuted" : "Audio Muted") : "MicomAudioService unavailable");
         }
         if ("precondition_toggle".equals(cmd)) {
-            boolean active = "1".equals(snap.get("hv.conditioning_active"))
+            boolean active = conditioningHeld
+                    || "1".equals(snap.get("hv.conditioning_active"))
                     || "active".equalsIgnoreCase(snap.get("conditioning.state"))
                     || "waiting".equalsIgnoreCase(snap.get("conditioning.state"));
-            String hmgArg = active ? "stop" : "start";
-            try {
-                String reply = HmgApi.connect().timeout(1200).command("conditioning", hmgArg);
-                return new CommandReply(true, reply);
-            } catch (Throwable hmgErr) {
-                String errMsg = hmgErr.getMessage();
-                if (errMsg != null && errMsg.trim().toLowerCase(Locale.US).startsWith("refused:")) {
-                    return new CommandReply(false, errMsg.trim());
-                }
-                if (tryLaunchpadService(active)) {
-                    return new CommandReply(true, active ? "Preconditioning stop sent to Launchpad" : "Preconditioning start sent to Launchpad");
-                }
-                return new CommandReply(false, String.valueOf(errMsg));
+            boolean allowWarm = arg != null && arg.toLowerCase(Locale.US).contains("warm");
+            CommandReply directRes = executeDirectConditioning(!active, allowWarm, snap);
+            if (directRes != null) {
+                return directRes;
             }
+            if (tryLaunchpadService(active)) {
+                return new CommandReply(true, active ? "Preconditioning stop sent to Launchpad" : "Preconditioning start sent to Launchpad");
+            }
+            return new CommandReply(false, "HEV preconditioning service unavailable");
         }
         if ("charge_door_open".equals(cmd) || "charge_door_close".equals(cmd) || "charge_door_toggle".equals(cmd)) {
             boolean currentlyOpen = "1".equals(snap.get("charge_door.open")) || bcmCdmState == 1;
@@ -1027,19 +1250,16 @@ final class DirectCarServiceBridge {
             if ("0".equals(snap.get("gear.park"))) {
                 return new CommandReply(false, "Refused: Car must be in PARK");
             }
-            try {
-                String reply = HmgApi.connect().timeout(1200).command("charge_door", open ? "open" : "close");
-                bcmCdmState = open ? 1 : 2;
-                return new CommandReply(true, reply);
-            } catch (Throwable hmgErr) {
-                String errMsg = hmgErr.getMessage();
-                if (errMsg != null && errMsg.trim().toLowerCase(Locale.US).startsWith("refused:")) {
-                    return new CommandReply(false, errMsg.trim());
-                }
-                boolean ok = callBoolWrite1(SVC_BCM, IFACE_BCM, "requestChargeLockDoor", !open);
-                if (ok) bcmCdmState = open ? 1 : 2;
-                return new CommandReply(ok, ok ? ("Charge door " + (open ? "open requested" : "close requested")) : String.valueOf(errMsg));
+            long nowMs = android.os.SystemClock.elapsedRealtime();
+            if (lastChargeDoorMs > 0L && (nowMs - lastChargeDoorMs) < CHARGE_DOOR_GAP_MS) {
+                return new CommandReply(false, "Refused: wait 5s between charge door commands");
             }
+            lastChargeDoorMs = nowMs;
+            boolean ok = callBoolWrite1(SVC_BCM, IFACE_BCM, "requestChargeLockDoor", !open);
+            if (ok) {
+                bcmCdmState = open ? 1 : 2;
+            }
+            return new CommandReply(ok, ok ? ("Charge door " + (open ? "open requested" : "close requested")) : "BCM charge door command failed");
         }
         return new CommandReply(false, "Unknown car command: " + cmd);
     }
@@ -1051,6 +1271,7 @@ final class DirectCarServiceBridge {
         any = callIntWrite1(SVC_VR, IFACE_VR, "All_Sunroof_Req", 1) || any;
         any = callIntWrite1(SVC_VR, IFACE_VR, "All_PTGCNTL_Req", 1) || any;
         any = callIntWrite1(SVC_VR, IFACE_VR, "All_TrunkTl_Req", 1) || any;
+        any = callIntWrite1(SVC_VR, IFACE_VR, "All_StrgWhlHeated_Req", 1) || any;
         any = callIntWrite1(SVC_VR, IFACE_VR, "set_TxSignal_Exist_Req", 1) || any;
         if (any) {
             lastVrSignalsEnableMs = System.currentTimeMillis();
@@ -1177,12 +1398,6 @@ final class DirectCarServiceBridge {
                 : ("passenger".equals(seatName) ? "Passenger "
                 : ("rear_left".equals(seatName) ? "Rear Left " : "Rear Right "));
 
-        CommandReply hmg = tryHmgCommandChecked(heat ? "seat_heat" : "seat_vent", seatName, levelWord);
-        if (hmg != null) {
-            return hmg.ok
-                    ? new CommandReply(true, prettySeat + (heat ? "Heat -> " : "Vent -> ") + levelWord.toUpperCase(Locale.US))
-                    : hmg;
-        }
         int usmCode = clamped == 0 ? 2
                 : (heat ? ((twoStep && clamped == 2) ? 8 : (clamped + 5)) : (clamped + 2));
         String usmMethod = "driver".equals(seatName) ? "setFrontSeatHeatDrvStep"
@@ -1211,21 +1426,109 @@ final class DirectCarServiceBridge {
         return cur - 1;
     }
 
-    /**
-     * Returns CommandReply(true, reply) on HMG-API success, CommandReply(false, msg) if HMG-API
-     * explicitly refused the command ("refused: ..."), or null if hmgapid is unreachable so the
-     * caller may safely fall back to direct Binder calls.
-     */
-    private CommandReply tryHmgCommandChecked(String name, String... args) {
-        try {
-            String res = HmgApi.connect().timeout(1200).command(name, args);
-            return new CommandReply(true, res);
-        } catch (Throwable err) {
-            String msg = err.getMessage();
-            if (msg != null && msg.trim().toLowerCase(Locale.US).startsWith("refused:")) {
-                return new CommandReply(false, msg.trim());
+    private CommandReply executeDirectConditioning(boolean start, boolean allowWarm, Map<String, String> snap) {
+        synchronized (condLock) {
+            if (!start) {
+                boolean sent = stopDirectConditioningLocked();
+                return new CommandReply(sent, sent ? "Battery Preconditioning STOP sent" : "HEV service unavailable");
             }
-            return null;
+            if (conditioningHeld) {
+                return new CommandReply(true, "Battery Preconditioning already active (" + conditioningState + ")");
+            }
+            Integer rdy = pollHevEvReady();
+            if (rdy != null && rdy != 1) {
+                return new CommandReply(false, "Refused: Car must be in READY state");
+            }
+            Integer setting = getHevStatusRaw(HEV_EV_BATTERYCONDITIONING);
+            if (setting != null && setting >= 0 && setting != 0xFFFF && setting != 2) {
+                return new CommandReply(false, "Refused: Enable Battery Conditioning in EV Settings first");
+            }
+            Integer ind = callIntNoArg(SVC_BCM, IFACE_BCM, "getBattCondIndSta", false);
+            if (ind != null && ind == 1) {
+                return new CommandReply(false, "Refused: Battery Conditioning already controlled by vehicle");
+            }
+            int packMinC = clusterPackTempMinC;
+            if (packMinC == Integer.MIN_VALUE && registeredClusterService != null) {
+                callVoidNoArg(SVC_CLUSTER, IFACE_CLUSTER, "requestBatteryInfoReq");
+                sleepQuietly(150L);
+                packMinC = clusterPackTempMinC;
+            }
+            int limitC = getModelCode().startsWith("NEEV") ? 21 : 20;
+            if (!allowWarm && packMinC >= limitC && packMinC <= 60) {
+                return new CommandReply(false, "Refused: Pack temp (" + packMinC + "\u00B0C) is warm (>= " + limitC + "\u00B0C)");
+            }
+            boolean okRoute = callIntWrite1(SVC_HEV, IFACE_HEV, "setBattCondRouteDis", COND_ROUTE_KM);
+            boolean okTime = callIntWrite1(SVC_HEV, IFACE_HEV, "setBattCondRemainTime", COND_ROUTE_MIN);
+            sleepQuietly(10L);
+            boolean okStation = callIntWrite2(SVC_HEV, IFACE_HEV, "setBattCondEvStation", 2, 3);
+            sleepQuietly(130L);
+            if (!(okRoute && okTime && okStation)) {
+                return null; // allow Launchpad fallback if binder signature differs
+            }
+            conditioningHeld = true;
+            conditioningKm = COND_ROUTE_KM;
+            conditioningMin = COND_ROUTE_MIN;
+            long nowMs = android.os.SystemClock.elapsedRealtime();
+            conditioningStartedAtMs = nowMs;
+            conditioningKeptAtMs = nowMs;
+            conditioningState = (ind == null || ind < 0) ? "requested" : "waiting";
+            return new CommandReply(true, "Battery Preconditioning requested");
+        }
+    }
+
+    private boolean stopDirectConditioningLocked() {
+        conditioningHeld = false;
+        boolean okRoute = callIntWrite1(SVC_HEV, IFACE_HEV, "setBattCondRouteDis", 2047);
+        boolean okTime = callIntWrite1(SVC_HEV, IFACE_HEV, "setBattCondRemainTime", 1023);
+        boolean okStation = callIntWrite2(SVC_HEV, IFACE_HEV, "setBattCondEvStation", 0, 0);
+        sleepQuietly(130L);
+        Integer ind = callIntNoArg(SVC_BCM, IFACE_BCM, "getBattCondIndSta", false);
+        conditioningState = (ind != null && ind == 1) ? "stopping" : "off";
+        return okRoute || okTime || okStation;
+    }
+
+    void stopHeldConditioningOnShutdown() {
+        synchronized (condLock) {
+            if (conditioningHeld) {
+                stopDirectConditioningLocked();
+            }
+        }
+    }
+
+    private void tickConditioning(Map<String, String> out) {
+        synchronized (condLock) {
+            long nowMs = android.os.SystemClock.elapsedRealtime();
+            Integer ind = callIntNoArg(SVC_BCM, IFACE_BCM, "getBattCondIndSta", false);
+            int indVal = (ind != null) ? ind.intValue() : (bcmBattCond >= 0 ? bcmBattCond : -1);
+
+            if ("stopping".equals(conditioningState)) {
+                if (indVal != 1) {
+                    conditioningState = "off";
+                }
+                out.put("conditioning.state", conditioningState);
+                return;
+            }
+            if (!conditioningHeld) {
+                out.put("conditioning.state", conditioningState);
+                return;
+            }
+            if ((nowMs - conditioningKeptAtMs) >= COND_KEEPALIVE_MS) {
+                // Only refresh route distance/time; never resend setBattCondEvStation(2,3) every 5s.
+                callIntWrite1(SVC_HEV, IFACE_HEV, "setBattCondRouteDis", conditioningKm);
+                callIntWrite1(SVC_HEV, IFACE_HEV, "setBattCondRemainTime", conditioningMin);
+                conditioningKeptAtMs = nowMs;
+            }
+            long activationMs = "CVEV".equals(getModelCode()) ? (5L * 60_000L) : (2L * 60_000L);
+            if (indVal == 1 && !"active".equals(conditioningState)) {
+                conditioningState = "active";
+            } else if (indVal == 0 && "active".equals(conditioningState)) {
+                stopDirectConditioningLocked();
+                conditioningState = "ended";
+            } else if (indVal == 0 && (nowMs - conditioningStartedAtMs) >= activationMs) {
+                stopDirectConditioningLocked();
+                conditioningState = "timed_out";
+            }
+            out.put("conditioning.state", conditioningState);
         }
     }
 
@@ -1437,6 +1740,65 @@ final class DirectCarServiceBridge {
         }
     }
 
+    private synchronized void ensureClusterListenerRegistered() {
+        IBinder b = getBinder(SVC_CLUSTER);
+        if (b == null || !b.isBinderAlive()) {
+            registeredClusterService = null;
+            return;
+        }
+        if (registeredClusterService == b && clusterListenerBinder != null) {
+            return;
+        }
+        try {
+            txClusterBattInfo = resolveListenerTx(IFACE_CLUSTER_LISTENER, "onHandleBatteryInfoResp", FB_CLUSTER_ON_BATT_INFO);
+            if (clusterListenerBinder == null) {
+                clusterListenerBinder = new Binder() {
+                    {
+                        attachInterface(null, IFACE_CLUSTER_LISTENER);
+                    }
+
+                    @Override
+                    protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) throws RemoteException {
+                        if (code == INTERFACE_TRANSACTION) {
+                            if (reply != null) reply.writeString(IFACE_CLUSTER_LISTENER);
+                            return true;
+                        }
+                        try {
+                            if (code == txClusterBattInfo) {
+                                data.enforceInterface(IFACE_CLUSTER_LISTENER);
+                                int[] info = data.createIntArray();
+                                if (info != null && info.length == 8 && info[1] >= -40 && info[1] <= 60) {
+                                    clusterPackTempMinC = info[1];
+                                    clusterPackTempAtMs = android.os.SystemClock.elapsedRealtime();
+                                }
+                            }
+                        } catch (Throwable ignored) {
+                        }
+                        if ((flags & FLAG_ONEWAY) == 0 && reply != null) {
+                            answerSafeReply(data, reply);
+                        }
+                        return true;
+                    }
+                };
+            }
+            TxEntry addTx = resolveTxByName(IFACE_CLUSTER, "addNavigationClusterListener");
+            if (addTx == null) return;
+            Parcel data = Parcel.obtain();
+            Parcel reply = Parcel.obtain();
+            try {
+                data.writeInterfaceToken(IFACE_CLUSTER);
+                data.writeStrongBinder(clusterListenerBinder);
+                b.transact(addTx.code, data, reply, 0);
+                reply.readException();
+                registeredClusterService = b;
+            } finally {
+                data.recycle();
+                reply.recycle();
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
     private static void answerSafeReply(Parcel data, Parcel reply) {
         reply.writeNoException();
         int end = data.dataSize();
@@ -1499,14 +1861,72 @@ final class DirectCarServiceBridge {
     private Integer pollHevEvReady() {
         try {
             if (cachedHevEvRdyFlag == null) {
-                Class<?> flagCls = Class.forName("com.hkmc.hev.HEVManager$HEVFlag", false, getInterfaceLoader(false));
-                Field f = flagCls.getField("EV_RDY");
-                cachedHevEvRdyFlag = Integer.valueOf(f.getInt(null));
+                int val = HEV_EV_RDY;
+                try {
+                    Class<?> flagCls = Class.forName("com.hkmc.hev.HEVManager$HEVFlag", false, getInterfaceLoader(false));
+                    Field f = flagCls.getField("EV_RDY");
+                    val = f.getInt(null);
+                } catch (Throwable ignored) {
+                }
+                cachedHevEvRdyFlag = Integer.valueOf(val);
             }
             return callIntArgInt(SVC_HEV, IFACE_HEV, "getHEVStatus", cachedHevEvRdyFlag.intValue(), false);
         } catch (Throwable ignored) {
             return null;
         }
+    }
+
+    private Integer getHevStatusRaw(int flag) {
+        return callIntArgInt(SVC_HEV, IFACE_HEV, "getHEVStatus", flag, false);
+    }
+
+    private String resolveRegulationServiceName() {
+        String cached = cachedRegulationSvcName;
+        if (cached != null) {
+            return cached.isEmpty() ? null : cached;
+        }
+        String resolved = null;
+        try {
+            Class<?> svcCls = Class.forName("com.hkmc.Service", false, getInterfaceLoader(false));
+            Field f = svcCls.getField("REGULATION_SERVICE");
+            Object val = f.get(null);
+            if (val instanceof String && !((String) val).trim().isEmpty()) {
+                resolved = ((String) val).trim();
+            }
+        } catch (Throwable ignored) {
+        }
+        if (resolved == null) {
+            if (getBinder("com.hkmc.micom.regulation") != null) {
+                resolved = "com.hkmc.micom.regulation";
+            } else if (getBinder("regulation") != null) {
+                resolved = "regulation";
+            } else if (getBinder("com.hkmc.regulation") != null) {
+                resolved = "com.hkmc.regulation";
+            }
+        }
+        cachedRegulationSvcName = resolved == null ? "" : resolved;
+        return resolved;
+    }
+
+    private String getModelCode() {
+        String cached = cachedProductModel;
+        if (cached != null) {
+            return cached;
+        }
+        String prod = "";
+        try {
+            Class<?> spCls = Class.forName("android.os.SystemProperties", false, getInterfaceLoader(false));
+            Method m = spCls.getMethod("get", String.class, String.class);
+            Object v = m.invoke(null, "ro.build.product", "");
+            if (v instanceof String) {
+                prod = ((String) v).trim();
+            }
+        } catch (Throwable ignored) {
+        }
+        int dot = prod.indexOf('.');
+        String code = (dot > 0 ? prod.substring(0, dot) : prod).toUpperCase(Locale.US);
+        cachedProductModel = code;
+        return code;
     }
 
     private int resolveListenerTx(String ifaceName, String methodName, int fallback) {
@@ -1864,6 +2284,31 @@ final class DirectCarServiceBridge {
         }
     }
 
+    private Integer callUnsignedByteNoArg(String svc, String iface, String method, boolean useHcan) {
+        Integer raw = callIntNoArg(svc, iface, method, useHcan);
+        return raw == null ? null : Integer.valueOf(raw.intValue() & 0xFF);
+    }
+
+    private byte[] callByteArrayNoArg(String svc, String iface, String method, boolean useHcan) {
+        IBinder b = getBinder(svc);
+        TxEntry tx = resolveTx(iface, method, useHcan);
+        if (b == null || tx == null) return null;
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(iface);
+            b.transact(tx.code, data, reply, 0);
+            reply.readException();
+            return reply.createByteArray();
+        } catch (Throwable t) {
+            invalidateBinderIfDead(svc, b);
+            return null;
+        } finally {
+            data.recycle();
+            reply.recycle();
+        }
+    }
+
     private boolean callIntWrite1(String svc, String iface, String method, int val) {
         IBinder b = getBinder(svc);
         TxEntry tx = resolveTx(iface, method, false, int.class);
@@ -1898,6 +2343,30 @@ final class DirectCarServiceBridge {
         try {
             data.writeInterfaceToken(iface);
             data.writeByte(val);
+            b.transact(tx.code, data, reply, 0);
+            reply.readException();
+            return true;
+        } catch (Throwable t) {
+            invalidateBinderIfDead(svc, b);
+            return false;
+        } finally {
+            data.recycle();
+            reply.recycle();
+        }
+    }
+
+    private boolean callIntWrite2(String svc, String iface, String method, int a, int bArg) {
+        IBinder b = getBinder(svc);
+        TxEntry tx = resolveTx(iface, method, false, int.class, int.class);
+        if (b == null || tx == null) {
+            return false;
+        }
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(iface);
+            data.writeInt(a);
+            data.writeInt(bArg);
             b.transact(tx.code, data, reply, 0);
             reply.readException();
             return true;
@@ -1989,10 +2458,29 @@ final class DirectCarServiceBridge {
                 registeredBcmService = null;
             } else if (SVC_DATC.equals(svcName)) {
                 registeredDatcService = null;
+            } else if (SVC_CLUSTER.equals(svcName)) {
+                registeredClusterService = null;
             } else if (SVC_VR.equals(svcName)) {
                 lastVrSignalsEnableMs = 0L;
             }
         }
+    }
+
+    private static int signExtend10(int val) {
+        int u = val & 0x3FF;
+        return (u & 0x200) != 0 ? (u - 0x400) : u;
+    }
+
+    private static String formatPowerKw(float kw) {
+        float rounded = Math.round(kw * 100.0f) / 100.0f;
+        if (Math.abs(rounded - Math.round(rounded)) < 0.005f) {
+            return String.valueOf(Math.round(rounded));
+        }
+        String s = String.format(Locale.US, "%.2f", rounded);
+        if (s.endsWith("0")) {
+            s = s.substring(0, s.length() - 1);
+        }
+        return s;
     }
 
     private static void putDatcBool(Map<String, String> out, String key, Float val, int trueVal) {
@@ -2001,8 +2489,14 @@ final class DirectCarServiceBridge {
         }
     }
 
-    private static void putByteFlag(Map<String, String> out, String key, Integer val) {
+    private static void putUnsignedByteFlag(Map<String, String> out, String key, Integer val) {
         if (val != null && val >= 0 && val <= 255) {
+            out.put(key, String.valueOf(val));
+        }
+    }
+
+    private static void putTpmsStatusFlag(Map<String, String> out, String key, Integer val) {
+        if (val != null && val >= 0 && val <= 3) {
             out.put(key, String.valueOf(val));
         }
     }
@@ -2044,6 +2538,7 @@ final class DirectCarServiceBridge {
 
     private static void decodeSeatState(Map<String, String> out, String seat, Integer state, boolean hasVent, boolean twoStep) {
         if (state == null || state <= 0 || state == 0xF) return;
+        out.put("seat_state." + seat, String.valueOf(state));
         int heat = -1;
         int vent = -1;
         if (state == 2) {

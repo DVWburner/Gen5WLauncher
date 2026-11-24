@@ -24,7 +24,7 @@ import java.util.Map;
 
 /**
  * Interactive Phase 1 control console for Home Switcher tests, 5-layer failsafe inspection,
- * USB ThemePack testing, and live HMG-API telemetry diagnostics.
+ * USB ThemePack testing, and live standalone Gen5W vehicle telemetry diagnostics.
  */
 final class SwitcherOverlayDialog extends FrameLayout {
     interface Actions {
@@ -46,6 +46,8 @@ final class SwitcherOverlayDialog extends FrameLayout {
     private final TextView confirmBtn;
     private final TextView testBtn;
     private final TextView promptChooserBtn;
+    private final TextView autoBootBtn;
+    private boolean currentAutoBoot = true;
 
     SwitcherOverlayDialog(Context context, SafeClickSoundPlayer sound, Actions actions) {
         super(context);
@@ -173,6 +175,21 @@ final class SwitcherOverlayDialog extends FrameLayout {
         sp.topMargin = 10;
         leftCol.addView(openStockBtn, sp);
 
+        autoBootBtn = makeBtn(context, "Auto-Activate Confirmed Home on Boot: ON", 0xFF1E293B, 0xFF34D399);
+        autoBootBtn.setGravity(Gravity.CENTER);
+        autoBootBtn.setOnClickListener(new OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                SwitcherOverlayDialog.this.sound.playClick(v);
+                SwitcherOverlayDialog.this.actions.onSendSwitcherCmd(
+                        currentAutoBoot ? "SET_AUTO_BOOT:false" : "SET_AUTO_BOOT:true");
+            }
+        });
+        LinearLayout.LayoutParams abp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        abp.topMargin = 10;
+        leftCol.addView(autoBootBtn, abp);
+
         TextView stockTesterBtn = makeBtn(context, "Open Stock Launcher Buttons Tester", 0xFF1E3A5F, 0xFF38BDF8);
         stockTesterBtn.setGravity(Gravity.CENTER);
         stockTesterBtn.setOnClickListener(new OnClickListener() {
@@ -211,7 +228,7 @@ final class SwitcherOverlayDialog extends FrameLayout {
         pbp.bottomMargin = 14;
         rightCol.addView(packBtn, pbp);
 
-        addHeading(context, rightCol, "Live HMG-API Vehicle Telemetry");
+        addHeading(context, rightCol, "Live Gen5W Vehicle Telemetry");
         telemetryDetail = addMono(context, rightCol, "Waiting for telemetry...");
 
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
@@ -252,11 +269,15 @@ final class SwitcherOverlayDialog extends FrameLayout {
         confirmBtn.setAlpha(confirmBtn.isEnabled() ? 1.0f : 0.45f);
         confirmBtn.setText(st.isCustomHome && st.homeEnabled ? "Default Home Confirmed \u2713" : "Set & Confirm Default Home");
         testBtn.setEnabled(st.serviceReachable);
+        currentAutoBoot = st.autoActivateOnBoot;
+        autoBootBtn.setEnabled(st.serviceReachable);
+        autoBootBtn.setAlpha(autoBootBtn.isEnabled() ? 1.0f : 0.45f);
+        autoBootBtn.setText("Auto-Activate Confirmed Home on Boot: " + (currentAutoBoot ? "ON" : "OFF"));
 
         StringBuilder fs = new StringBuilder();
         fs.append("APK Version    : ").append(st.appVersionName).append(" (code ").append(st.appVersionCode).append(")\n");
         fs.append("Preferred HOME : ").append(st.activeHome).append('\n');
-        fs.append("Confirmed Boot : ").append(st.homeEnabled).append('\n');
+        fs.append("Confirmed Boot : ").append(st.homeEnabled).append(" (autoBoot=").append(st.autoActivateOnBoot).append(")\n");
         fs.append("Boot Strikes   : ").append(st.strikes).append(" / 2\n");
         fs.append("Boot Grace Left: ").append(st.graceRemainingSec).append("s\n");
         fs.append("Health Confirm : ").append(st.healthConfirmRemainingSec).append("s\n");
@@ -282,7 +303,7 @@ final class SwitcherOverlayDialog extends FrameLayout {
 
         StringBuilder td = new StringBuilder();
         if (!tel.connected) {
-            td.append("HMG-API Status : disconnected (").append(tel.error).append(")");
+            td.append("Vehicle Bus    : disconnected (").append(tel.error).append(")");
         } else {
             for (Map.Entry<String, String> e : tel.allValues.entrySet()) {
                 td.append(String.format("%-20s : %s\n", e.getKey(), e.getValue()));

@@ -226,6 +226,9 @@
                         </Grid.RowDefinitions>
                         <DockPanel Grid.Row="0" Margin="0,0,0,6">
                             <Button Content="Re-Scan" DockPanel.Dock="Right" Padding="8,3" FontSize="11" Click="OnRescanClick"/>
+                            <Button x:Name="CleanUnusedBtn" Content="Clean Unused" DockPanel.Dock="Right" Padding="8,3" Margin="0,0,6,0" FontSize="11"
+                                    ToolTip="Delete unreferenced wallpapers, video frames, fonts, and custom icons from your local workspace folder"
+                                    Visibility="Collapsed" Click="OnCleanUnusedClick"/>
                             <TextBlock Text="SAFETY &amp; SINGLE-THEME AUDIT" FontWeight="Bold" Foreground="#FF38BDF8" FontSize="12" VerticalAlignment="Center"/>
                         </DockPanel>
                         <Border x:Name="AuditBadgeBorder" Grid.Row="1" CornerRadius="5" Padding="8,5" Margin="0,0,0,8" Background="#FF064E3B" BorderBrush="#FF10B981" BorderThickness="1">

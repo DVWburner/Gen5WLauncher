@@ -1,6 +1,5 @@
 package org.json;
 
-import hmgapi.engine.Json;
 import java.util.List;
 import java.util.Map;
 
@@ -12,7 +11,7 @@ public class JSONTokener {
     }
 
     public Object nextValue() {
-        Object parsed = Json.parse(text);
+        Object parsed = SimpleJsonParser.parse(text);
         if (parsed instanceof Map) {
             @SuppressWarnings("unchecked")
             Map<String, Object> m = (Map<String, Object>) parsed;

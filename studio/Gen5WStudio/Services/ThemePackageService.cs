@@ -90,10 +90,288 @@ public static class ThemePackageService
         return rawBytes;
     }
 
+    private static readonly HashSet<string> NonIconWidgetKinds = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "spacer", "divider", "text", "sensor", "label", "progress_bar",
+        "page_indicator", "clock", "telemetry_badge", "soc_ring", "ring_gauge",
+        "telemetry_gauge", "switcher_status"
+    };
+
+    private static bool IsNonIconWidgetKind(string? kind) =>
+        !string.IsNullOrWhiteSpace(kind) && NonIconWidgetKinds.Contains(kind.Trim());
+
+    public static string? NormalizeRelativeAssetRef(string? rawRef)
+    {
+        if (string.IsNullOrWhiteSpace(rawRef)) return null;
+        string clean = rawRef.Trim().Replace('\\', '/');
+        while (clean.StartsWith("./", StringComparison.Ordinal))
+            clean = clean.Substring(2);
+        clean = clean.TrimStart('/');
+        if (string.IsNullOrEmpty(clean)
+            || clean.Equals("none", StringComparison.OrdinalIgnoreCase)
+            || clean.Equals("default", StringComparison.OrdinalIgnoreCase)
+            || clean.Contains("..")
+            || clean.Contains(':')
+            || clean.IndexOf('\0') >= 0)
+        {
+            return null;
+        }
+        return clean;
+    }
+
+    /// <summary>
+    /// Strips inactive background asset pointers (e.g. an old framesDir left over after switching to
+    /// bitmap or animated_aurora) and non-icon widget icon fields on a release/export clone.
+    /// </summary>
+    public static void PruneInactiveFieldsForRelease(ThemePackModel pack)
+    {
+        if (pack == null) return;
+        pack.Normalize();
+
+        if (pack.Background != null)
+        {
+            string bgType = (pack.Background.Type ?? "animated_aurora").Trim().ToLowerInvariant();
+            switch (bgType)
+            {
+                case "bitmap":
+                case "image":
+                    pack.Background.FramesDir = null;
+                    pack.Background.GifAsset = null;
+                    pack.Background.VideoAsset = null;
+                    break;
+
+                case "animated_frames":
+                case "frames":
+                case "frame_loop":
+                case "sequence":
+                    pack.Background.BitmapAsset = null;
+                    pack.Background.GifAsset = null;
+                    pack.Background.VideoAsset = null;
+                    break;
+
+                case "animated_gif":
+                case "gif":
+                    pack.Background.BitmapAsset = null;
+                    pack.Background.VideoAsset = null;
+                    if (!string.IsNullOrWhiteSpace(pack.Background.GifAsset))
+                        pack.Background.FramesDir = null;
+                    break;
+
+                case "video":
+                    pack.Background.GifAsset = null;
+                    if (!string.IsNullOrWhiteSpace(pack.Background.VideoAsset))
+                        pack.Background.FramesDir = null;
+                    break;
+
+                default:
+                    // Procedural backdrops (solid, gradient, animated_aurora, animated_grid, animated_mesh)
+                    pack.Background.BitmapAsset = null;
+                    pack.Background.FramesDir = null;
+                    pack.Background.GifAsset = null;
+                    pack.Background.VideoAsset = null;
+                    break;
+            }
+        }
+
+        if (pack.Root != null)
+            PruneInactiveNodeFieldsRecursive(pack.Root);
+    }
+
+    private static void PruneInactiveNodeFieldsRecursive(LayoutNodeModel node)
+    {
+        if (node.IsPanel || IsNonIconWidgetKind(node.Kind))
+        {
+            node.Icon = null;
+            node.BitmapAsset = null;
+            node.AnimIcon = null;
+        }
+
+        if (node.Children != null)
+        {
+            foreach (var child in node.Children)
+                PruneInactiveNodeFieldsRecursive(child);
+        }
+    }
+
+    /// <summary>
+    /// Collects the exact set of relative asset files and frame-sequence directories actively referenced
+    /// by <paramref name="pack"/> (respecting the active <c>background.type</c> and widget kinds).
+    /// </summary>
+    public static (HashSet<string> ReferencedFiles, HashSet<string> ReferencedDirs) CollectReferencedAssets(
+        ThemePackModel pack,
+        string? workspaceDir = null)
+    {
+        var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var dirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (pack == null) return (files, dirs);
+
+        var normalized = pack.DeepClone();
+        PruneInactiveFieldsForRelease(normalized);
+
+        string? wsFull = (!string.IsNullOrWhiteSpace(workspaceDir) && Directory.Exists(workspaceDir))
+            ? Path.GetFullPath(workspaceDir)
+            : null;
+
+        void AddFileRef(string? raw)
+        {
+            string? clean = NormalizeRelativeAssetRef(raw);
+            if (clean != null) files.Add(clean);
+        }
+
+        void AddFontRef(string? raw)
+        {
+            string? clean = NormalizeRelativeAssetRef(raw);
+            if (clean != null
+                && (clean.EndsWith(".ttf", StringComparison.OrdinalIgnoreCase)
+                    || clean.EndsWith(".otf", StringComparison.OrdinalIgnoreCase)))
+            {
+                files.Add(clean);
+            }
+        }
+
+        void AddMediaOrFramesRef(string? raw)
+        {
+            string? clean = NormalizeRelativeAssetRef(raw);
+            if (clean == null) return;
+
+            bool isJsonManifest = clean.EndsWith(".json", StringComparison.OrdinalIgnoreCase);
+            bool isDirectoryOnDisk = wsFull != null
+                && Directory.Exists(Path.Combine(wsFull, clean.Replace('/', Path.DirectorySeparatorChar)));
+            bool looksLikeFramesDir = isJsonManifest || isDirectoryOnDisk || string.IsNullOrEmpty(Path.GetExtension(clean));
+
+            if (!looksLikeFramesDir)
+            {
+                files.Add(clean);
+                return;
+            }
+
+            string baseDir = isJsonManifest
+                ? (clean.LastIndexOf('/') is int slash and > 0 ? clean[..slash] : "")
+                : clean.TrimEnd('/');
+            if (string.IsNullOrEmpty(baseDir)) return;
+
+            if (wsFull != null)
+            {
+                string framesJsonFull = Path.Combine(wsFull, baseDir.Replace('/', Path.DirectorySeparatorChar), "frames.json");
+                if (File.Exists(framesJsonFull) && TryReadFramesManifestList(framesJsonFull, out var frameNames) && frameNames.Count > 0)
+                {
+                    files.Add(baseDir + "/frames.json");
+                    foreach (string frame in frameNames)
+                    {
+                        string? cleanFrame = NormalizeRelativeAssetRef(baseDir + "/" + frame);
+                        if (cleanFrame != null) files.Add(cleanFrame);
+                    }
+                    return;
+                }
+            }
+
+            dirs.Add(baseDir + "/");
+            if (isJsonManifest) files.Add(clean);
+        }
+
+        if (normalized.Background != null)
+        {
+            string bgType = (normalized.Background.Type ?? "animated_aurora").Trim().ToLowerInvariant();
+            switch (bgType)
+            {
+                case "bitmap":
+                case "image":
+                    AddFileRef(normalized.Background.BitmapAsset);
+                    break;
+
+                case "animated_frames":
+                case "frames":
+                case "frame_loop":
+                case "sequence":
+                    AddMediaOrFramesRef(normalized.Background.FramesDir);
+                    break;
+
+                case "animated_gif":
+                case "gif":
+                    AddMediaOrFramesRef(!string.IsNullOrWhiteSpace(normalized.Background.GifAsset)
+                        ? normalized.Background.GifAsset
+                        : normalized.Background.FramesDir);
+                    break;
+
+                case "video":
+                    AddMediaOrFramesRef(!string.IsNullOrWhiteSpace(normalized.Background.VideoAsset)
+                        ? normalized.Background.VideoAsset
+                        : normalized.Background.FramesDir);
+                    AddFileRef(normalized.Background.BitmapAsset);
+                    break;
+            }
+        }
+
+        void WalkNode(LayoutNodeModel? node)
+        {
+            if (node == null) return;
+
+            AddFileRef(node.Style?.BgBitmapAsset);
+            AddMediaOrFramesRef(node.Style?.BgAnimAsset);
+            AddFontRef(node.Style?.FontFamily);
+            AddFontRef(node.Indicator?.FontFamily);
+
+            if (!node.IsPanel && !IsNonIconWidgetKind(node.Kind))
+            {
+                AddMediaOrFramesRef(node.AnimIcon);
+                AddFileRef(node.BitmapAsset);
+                AddFileRef(node.Icon);
+            }
+
+            if (node.Children != null)
+            {
+                foreach (var child in node.Children)
+                    WalkNode(child);
+            }
+        }
+
+        WalkNode(normalized.Root);
+        return (files, dirs);
+    }
+
+    public static bool IsAssetFileReferenced(string relPath, HashSet<string> referencedFiles, HashSet<string> referencedDirs)
+    {
+        string? clean = NormalizeRelativeAssetRef(relPath);
+        if (clean == null) return false;
+        if (referencedFiles.Contains(clean)) return true;
+        foreach (string dirPrefix in referencedDirs)
+        {
+            if (clean.StartsWith(dirPrefix, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
+    private static bool TryReadFramesManifestList(string framesJsonFullPath, out List<string> frames)
+    {
+        frames = new List<string>();
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllBytes(framesJsonFullPath));
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return false;
+            if (!doc.RootElement.TryGetProperty("frames", out var arr) || arr.ValueKind != JsonValueKind.Array)
+                return false;
+            foreach (var item in arr.EnumerateArray())
+            {
+                if (item.ValueKind == JsonValueKind.String)
+                {
+                    string? s = item.GetString()?.Trim();
+                    if (!string.IsNullOrEmpty(s)) frames.Add(s);
+                }
+            }
+            return frames.Count > 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     public static ThemeSecurityAuditResult AuditWorkspaceTheme(
         ThemePackModel pack,
         string workspaceDir,
-        bool stripUnsafeActions = false)
+        bool stripUnsafeActions = false,
+        bool onlyReferencedAssets = true)
     {
         var result = new ThemeSecurityAuditResult();
         if (pack == null || string.IsNullOrWhiteSpace(workspaceDir) || !Directory.Exists(workspaceDir))
@@ -112,7 +390,9 @@ public static class ThemePackageService
         AuditLayoutActions(pack.Root, result, stripUnsafeActions);
 
         string wsFull = Path.GetFullPath(workspaceDir);
-        var filesToAudit = new List<string>();
+        var (refFiles, refDirs) = CollectReferencedAssets(pack, wsFull);
+        var filesToAudit = new List<(string RelPath, string? FullPath, byte[]? FallbackBytes)>();
+        var seenRelPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // Top-level files in active theme root (layout.json/manifest.json/thumbnail are generated fresh on package)
         foreach (string file in Directory.GetFiles(wsFull).OrderBy(f => f, StringComparer.OrdinalIgnoreCase))
@@ -126,7 +406,14 @@ public static class ThemePackageService
             {
                 continue;
             }
-            filesToAudit.Add(file);
+            if (onlyReferencedAssets && !IsAssetFileReferenced(name, refFiles, refDirs))
+            {
+                result.ExcludedUnusedFiles.Add(name);
+                result.ExcludedUnusedBytes += new FileInfo(file).Length;
+                continue;
+            }
+            seenRelPaths.Add(name);
+            filesToAudit.Add((name, file, null));
         }
 
         // Only scan whitelisted top-level theme asset folders; skip unrelated folders like packs/
@@ -151,13 +438,43 @@ public static class ThemePackageService
                     result.Errors.Add($"Asset folder contains nested theme file '{rel}'. Only one theme is allowed.");
                     continue;
                 }
-                filesToAudit.Add(file);
+                if (onlyReferencedAssets && !IsAssetFileReferenced(rel, refFiles, refDirs))
+                {
+                    result.ExcludedUnusedFiles.Add(rel);
+                    result.ExcludedUnusedBytes += new FileInfo(file).Length;
+                    continue;
+                }
+                seenRelPaths.Add(rel);
+                filesToAudit.Add((rel, file, null));
             }
         }
 
-        foreach (string file in filesToAudit)
+        // Include referenced built-in starter icons even if workspace folder only had layout.json,
+        // and warn if a custom asset referenced in layout.json is missing on disk.
+        foreach (string expectedRel in refFiles.OrderBy(r => r, StringComparer.OrdinalIgnoreCase))
         {
-            string rel = Path.GetRelativePath(wsFull, file).Replace('\\', '/');
+            if (seenRelPaths.Contains(expectedRel)) continue;
+            byte[]? builtInBytes = PackWorkspaceService.TryReadBuiltInAssetBytes(expectedRel);
+            if (builtInBytes != null && builtInBytes.Length > 0)
+            {
+                seenRelPaths.Add(expectedRel);
+                filesToAudit.Add((expectedRel, null, builtInBytes));
+            }
+            else
+            {
+                result.Warnings.Add($"Referenced asset '{expectedRel}' was not found in theme workspace.");
+            }
+        }
+
+        if (result.ExcludedUnusedFiles.Count > 0)
+        {
+            result.Warnings.Add(
+                $"Excluded {result.ExcludedUnusedFiles.Count} unused workspace file(s) ({result.ExcludedUnusedBytes / 1024.0:0.#} KB) not referenced by layout.json.");
+        }
+
+        foreach (var candidate in filesToAudit)
+        {
+            string rel = candidate.RelPath;
 
             if (!ValidateRelativePathStructure(rel, out string pathErr))
             {
@@ -171,14 +488,20 @@ public static class ThemePackageService
                 break;
             }
 
-            var fi = new FileInfo(file);
-            if (fi.Length > MaxSingleFileBytes)
+            if (candidate.FullPath != null)
             {
-                result.RejectedFiles.Add($"{rel} (exceeds {MaxSingleFileBytes / (1024 * 1024)} MB per-file limit)");
-                continue;
+                var fi = new FileInfo(candidate.FullPath);
+                if (fi.Length > MaxSingleFileBytes)
+                {
+                    result.RejectedFiles.Add($"{rel} (exceeds {MaxSingleFileBytes / (1024 * 1024)} MB per-file limit)");
+                    continue;
+                }
             }
 
-            byte[] bytes = PrepareAssetBytesForPackage(rel, File.ReadAllBytes(file));
+            byte[] rawBytes = candidate.FullPath != null
+                ? File.ReadAllBytes(candidate.FullPath)
+                : (candidate.FallbackBytes ?? Array.Empty<byte>());
+            byte[] bytes = PrepareAssetBytesForPackage(rel, rawBytes);
             if (bytes.Length > MaxSingleFileBytes)
             {
                 result.RejectedFiles.Add($"{rel} (exceeds {MaxSingleFileBytes / (1024 * 1024)} MB per-file limit)");
@@ -220,8 +543,9 @@ public static class ThemePackageService
 
         var pack = sourcePack.DeepClone();
         StampPackDatesForRelease(pack);
+        PruneInactiveFieldsForRelease(pack);
 
-        var audit = AuditWorkspaceTheme(pack, workspaceDir, stripUnsafeActions);
+        var audit = AuditWorkspaceTheme(pack, workspaceDir, stripUnsafeActions, onlyReferencedAssets: true);
         if (!audit.IsSafe)
         {
             var reasons = audit.Errors.Concat(audit.RejectedFiles.Select(r => "Unsafe/disallowed file: " + r));
@@ -264,7 +588,11 @@ public static class ThemePackageService
             foreach (var entry in audit.IncludedFiles)
             {
                 string srcPath = Path.Combine(wsFull, entry.Path.Replace('/', Path.DirectorySeparatorChar));
-                WriteZipEntry(zip, entry.Path, PrepareAssetBytesForPackage(entry.Path, File.ReadAllBytes(srcPath)));
+                byte[] rawBytes = File.Exists(srcPath)
+                    ? File.ReadAllBytes(srcPath)
+                    : (PackWorkspaceService.TryReadBuiltInAssetBytes(entry.Path)
+                       ?? throw new FileNotFoundException($"Missing referenced asset '{entry.Path}'", srcPath));
+                WriteZipEntry(zip, entry.Path, PrepareAssetBytesForPackage(entry.Path, rawBytes));
             }
         }
 
@@ -697,7 +1025,7 @@ public static class ThemePackageService
 
     private static void AuditLayoutActions(LayoutNodeModel? node, ThemeSecurityAuditResult audit, bool stripUnsafeActions)
     {
-        // Root actions (root_start, root_service, root_broadcast) are permitted since head units have HMG-API and root access.
+        // Root actions (root_start, root_service, root_broadcast) are permitted since NEMESIS head units grant root access.
     }
 
     private static void WriteZipEntry(ZipArchive zip, string entryName, byte[] data)

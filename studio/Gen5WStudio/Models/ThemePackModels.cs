@@ -101,6 +101,7 @@ public sealed class ThemePackModel
         Category = string.IsNullOrWhiteSpace(Category) ? "EV & Telemetry" : Category.Trim();
         Tokens ??= new();
         Background ??= new();
+        Background.NormalizeAliases();
         if (Pages is { Count: > 0 } && (Root == null || Root.Children == null || Root.Children.Count == 0))
         {
             Root = new LayoutNodeModel
@@ -186,6 +187,19 @@ public sealed class BackgroundSpecModel
 
     [JsonPropertyName("speed")]
     public double? Speed { get; set; } = 1.0;
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
+
+    public void NormalizeAliases()
+    {
+        if (ExtensionData == null) return;
+        if (string.IsNullOrWhiteSpace(BitmapAsset) && WidgetStyleModel.TryGetExtString(ExtensionData, "posterAsset", out string? poster))
+            BitmapAsset = poster;
+        if (string.IsNullOrWhiteSpace(FramesDir) && WidgetStyleModel.TryGetExtString(ExtensionData, "animAsset", out string? animDir))
+            FramesDir = animDir;
+        ExtensionData = null;
+    }
 }
 
 public sealed class LayoutNodeModel : INotifyPropertyChanged
@@ -449,6 +463,12 @@ public sealed class LayoutNodeModel : INotifyPropertyChanged
         }
         else
         {
+            if (string.IsNullOrWhiteSpace(Kind)
+                && !string.IsNullOrWhiteSpace(Type)
+                && !"widget".Equals(Type, StringComparison.OrdinalIgnoreCase))
+            {
+                Kind = Type;
+            }
             Kind ??= "tile";
         }
     }
@@ -781,6 +801,12 @@ public sealed class ActionSpecModel
 
     public void NormalizeAliases()
     {
+        if (string.IsNullOrWhiteSpace(ExtraKey) && !string.IsNullOrWhiteSpace(ExtraIntKey))
+        {
+            ExtraKey = ExtraIntKey;
+            ExtraType = "int";
+            ExtraVal = (ExtraIntValue ?? 0).ToString();
+        }
         if (ExtensionData == null) return;
         if (string.IsNullOrWhiteSpace(Package) && WidgetStyleModel.TryGetExtString(ExtensionData, "pkg", out string? pkg))
             Package = pkg;
@@ -788,6 +814,13 @@ public sealed class ActionSpecModel
             Class = cls;
         if (string.IsNullOrWhiteSpace(IntentAction) && WidgetStyleModel.TryGetExtString(ExtensionData, "action", out string? act))
             IntentAction = act;
+        if (string.IsNullOrWhiteSpace(Cmd)
+            && (WidgetStyleModel.TryGetExtString(ExtensionData, "preset", out string? legCmd)
+                || WidgetStyleModel.TryGetExtString(ExtensionData, "page", out legCmd)
+                || WidgetStyleModel.TryGetExtString(ExtensionData, "tab", out legCmd)))
+        {
+            Cmd = legCmd;
+        }
         ExtensionData = null;
     }
 }

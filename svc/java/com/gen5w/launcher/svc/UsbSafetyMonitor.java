@@ -1,10 +1,7 @@
 package com.gen5w.launcher.svc;
 
-import hmgapi.client.HmgApi;
-
 import java.io.File;
 import java.util.LinkedHashSet;
-import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
@@ -24,7 +21,12 @@ final class UsbSafetyMonitor {
     private static final String[] FIXED_USB_ROOTS = {
             "/storage/usb0",
             "/storage/usb1",
-            "/storage/usb2"
+            "/storage/usb2",
+            "/mnt/media_rw/usb0",
+            "/mnt/media_rw/usb1",
+            "/mnt/media_rw/usb2",
+            "/mnt/usb_storage",
+            "/storage/usbdisk"
     };
 
     Signal scan() {
@@ -38,23 +40,6 @@ final class UsbSafetyMonitor {
                     dirs.add(modSub);
                 }
             }
-        }
-        try {
-            HmgApi api = HmgApi.connect().timeout(600);
-            if (api.available()) {
-                List<String> hmgUsb = api.usbFolders();
-                for (String p : hmgUsb) {
-                    File f = new File(p);
-                    if (f.isDirectory()) {
-                        dirs.add(f);
-                        if (f.getParentFile() != null && f.getParentFile().isDirectory()) {
-                            dirs.add(f.getParentFile());
-                        }
-                    }
-                }
-            }
-        } catch (Throwable ignored) {
-            // Direct FIXED_USB_ROOTS already covers standard mounts even if hmgapid is busy.
         }
 
         boolean safeModeSeen = false;

@@ -260,9 +260,9 @@ public final class LayoutEngine {
                     readyTxt = "STANDBY";
                 } else if (!s.error.isEmpty()) {
                     String msg = s.error.length() > 42 ? s.error.substring(0, 42) + "..." : s.error;
-                    readyTxt = "HMG-API: " + msg;
+                    readyTxt = "VEHICLE BUS: " + msg;
                 } else {
-                    readyTxt = "HMG-API LINKING...";
+                    readyTxt = "VEHICLE BUS LINKING...";
                 }
                 setTextIfChanged(h.statusChip, readyTxt);
                 String extStr = fmtTemp(s);
@@ -733,6 +733,29 @@ public final class LayoutEngine {
             }
             if (k.startsWith("tyre.") && k.endsWith("_status")) {
                 return fmtZeroFlag(s.getRaw(k), "OK", "LOW");
+            }
+            if (k.startsWith("tyre.") && k.endsWith("_psi")) {
+                String r = s.getRaw(k);
+                if (!"--".equals(r)) {
+                    try {
+                        float psi = Float.parseFloat(r);
+                        String lowU = u.toLowerCase(Locale.US);
+                        if (lowU.contains("bar")) {
+                            return String.format(Locale.US, "%.1f %s", psi * 0.06894757f, u);
+                        }
+                        if (lowU.contains("kpa")) {
+                            return Math.round(psi * 6.894757f) + " " + u;
+                        }
+                        return Math.round(psi) + " " + (u.isEmpty() ? "psi" : u);
+                    } catch (NumberFormatException ignored) {
+                    }
+                }
+                String statusKey = k.substring(0, k.length() - 4) + "_status";
+                String stRaw = s.getRaw(statusKey);
+                if (!"--".equals(stRaw)) {
+                    return fmtZeroFlag(stRaw, "OK", "LOW");
+                }
+                return "--";
             }
             if (k.startsWith("window.") || "sunroof.open".equals(k)) {
                 return fmtZeroFlag(s.getRaw(k), "CLOSED", "OPEN");
@@ -1527,7 +1550,7 @@ public final class LayoutEngine {
         title.setTextColor(w.style.textColor);
         applyTextTypography(title, w.style, 22f, false, true);
         TextView status = new TextView(context);
-        status.setText("HMG-API VEHICLE BUS");
+        status.setText("GEN5W VEHICLE BUS");
         status.setTextColor(w.style.accentColor);
         applyTextTypography(status, w.style, 15f, true, false);
         titleCol.addView(title);

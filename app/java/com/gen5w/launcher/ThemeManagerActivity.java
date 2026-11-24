@@ -69,7 +69,7 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
     private SafeClickSoundPlayer soundPlayer;
     private StoreThumbnailLoader thumbnailLoader;
     private Drawable defaultPackIcon;
-    private String currentAppVersion = "0.4.9";
+    private String currentAppVersion = "0.4.10";
 
     private FrameLayout rootFrame;
     private TextView activeSummaryView;
@@ -1998,7 +1998,7 @@ public final class ThemeManagerActivity extends Activity implements TelemetryMod
             }
         } catch (Throwable ignored) {
         }
-        return "0.4.9";
+        return "0.4.10";
     }
 
     private static ThemePackManager.PackEntry findMatch(

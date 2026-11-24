@@ -259,6 +259,12 @@ public final class AppLauncher {
             }
             return launchStockItem(context, StockMenuCatalog.findPresetItem("iot_bcast"));
         }
+        if ("hmgapi".equalsIgnoreCase(presetKey)) {
+            if (!StockMenuCatalog.isPackageInstalled(context.getPackageManager(), "hmgapi.app")) {
+                Toast.makeText(context, "HMG-API not installed \u2014 opening NEMESIS", Toast.LENGTH_SHORT).show();
+                return launchNemesisEntry(context);
+            }
+        }
         if ("nemesis".equalsIgnoreCase(presetKey)) {
             return launchNemesisEntry(context);
         }
